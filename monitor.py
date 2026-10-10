@@ -28,21 +28,91 @@ OUT = HOME / "data"
 PREFERRED = {"Portugal", "Spain", "France", "Germany", "Netherlands", "Belgium"}
 ALLOWED = PREFERRED | {"Luxembourg", "Austria", "Switzerland", "Italy", "Denmark", "Norway", "Sweden", "Finland", "Iceland", "Czech Republic", "Poland", "Slovenia", "Croatia", "Estonia", "Latvia", "Lithuania", "Hungary", "Slovakia", "Greece", "Malta"}
 
-def get_state(url):
-    # Default public HTTP transport; "browser" remains opt-in for diagnostics.
-    if os.environ.get("THS_FETCH_MODE","http") != "browser":
-        return http_state.fetch_state(url)
-    proc = subprocess.run([BROWSER, "--stealth", "fetch", url, "--dump", "original", "-q"],
-                          capture_output=True, timeout=35, check=False)
+def _browser_state(url):
+    # Public-page parser fallback, NOT a method to evade security challenges.
+    http_state.validate_url(url)
+    proc=subprocess.run([BROWSER,"fetch",url,"--dump","original","-q"],
+                        capture_output=True,timeout=35,check=False)
     if proc.returncode:
-        raise RuntimeError(f"Obscura exit {proc.returncode}")
-    html = proc.stdout.decode("utf-8", errors="replace")
+        raise http_state.FetchError(f"Browser fallback failed (exit {proc.returncode})")
+    html=proc.stdout.decode("utf-8",errors="replace")
+    if http_state._is_challenge(html):
+        raise http_state.AccessRestricted("Browser received a security challenge")
     if STATE_TAG not in html:
-        raise RuntimeError("Missing structured state (blocked/error/not a listing)")
+        raise http_state.ParseError("Browser output also lacks structured state")
     try:
-        return json.loads(html.split(STATE_TAG, 1)[1].split("</script>", 1)[0])
-    except (ValueError, IndexError) as err:
-        raise RuntimeError("Malformed page state") from err
+        state=json.loads(html.split(STATE_TAG,1)[1].split("</script>",1)[0])
+    except (ValueError,IndexError) as exc:
+        raise http_state.ParseError("Browser output contains malformed state") from exc
+    if not isinstance(state,dict) or "search" not in state:
+        raise http_state.ParseError("Browser output has unexpected JSON structure")
+    return state
+
+def _check_access_cooldown():
+    """Shared across independent cron lanes. Respect explicit access refusals."""
+    file=OUT/"http-access-cooldown.json"
+    try:
+        info=json.loads(file.read_text())
+        until=float(info.get("until",0))
+    except (ValueError,TypeError,OSError):
+        return
+    if time.time()<until:
+        raise http_state.AccessRestricted("Target access cooldown active")
+
+def _pause_access(exc):
+    text=str(exc)
+    seconds=3600 if "429" in text else 21600 if ("403" in text or "challenge" in text.lower()) else 1800
+    file=OUT/"http-access-cooldown.json"
+    file.parent.mkdir(parents=True,exist_ok=True)
+    tmp=file.with_name(file.name+"."+str(os.getpid())+".tmp")
+    tmp.write_text(json.dumps({"until":time.time()+seconds,
+                               "reason":"rate_limited" if "429" in text else "access_restricted"}))
+    tmp.replace(file)
+    print("ths_access_cooldown_seconds",seconds,file=sys.stderr)
+
+def get_state(url):
+    _check_access_cooldown()
+    try:
+        return _fetch_with_fallback(url)
+    except http_state.AccessRestricted as exc:
+        _pause_access(exc)
+        raise
+
+def _fetch_with_fallback(url):
+    mode=os.environ.get("THS_FETCH_MODE","http")
+    if mode=="browser":
+        return _browser_state(url)
+    if mode!="http":
+        raise ValueError("THS_FETCH_MODE must be http or browser")
+    try:
+        return http_state.fetch_state(url)
+    except http_state.AccessRestricted:
+        # Never switch egress IP or browser to work around 403/429/challenges.
+        raise
+    except http_state.TransportError:
+        # Broker is standby for network faults only, and only when a previously
+        # validated target pool is actually available. Never proxy auth traffic.
+        if os.environ.get("THS_PROXY_FALLBACK","0")=="1" and http_state.broker_usable():
+            print("ths_transport_fallback proxy_after_network_error",file=sys.stderr)
+            try:
+                return http_state.fetch_state(url,timeout=8,
+                                              proxy_url=http_state.LOCAL_BROKER)
+            except http_state.AccessRestricted:
+                raise
+            except (http_state.TransportError,http_state.ParseError):
+                if os.environ.get("THS_BROWSER_FALLBACK","0")=="1":
+                    print("ths_transport_fallback browser_after_proxy_error",file=sys.stderr)
+                    return _browser_state(url)
+                raise
+        if os.environ.get("THS_BROWSER_FALLBACK","0")=="1":
+            print("ths_transport_fallback browser_after_network_error",file=sys.stderr)
+            return _browser_state(url)
+        raise
+    except http_state.ParseError:
+        if os.environ.get("THS_BROWSER_FALLBACK","0")=="1":
+            print("ths_transport_fallback browser_after_parse_error",file=sys.stderr)
+            return _browser_state(url)
+        raise
 
 @lru_cache(maxsize=1)
 def get_confirmed():

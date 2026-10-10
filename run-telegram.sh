@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /srv/apps/trustedhousesitters-monitor
+if [ -f data/config.env ]; then
+  set -a
+  source data/config.env
+  set +a
+fi
 # Outbound Telegram runs only after a paired dedicated bot exists.
 if [ ! -s data/telegram_bot_token ] || [ ! -s data/telegram_chat_id ]; then
   exit 0

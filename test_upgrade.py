@@ -65,6 +65,67 @@ class Tests(unittest.TestCase):
                     self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
             self.assertEqual(outgoing,["sendMessage","sendMessage","sendMessage"])
             con.close()
+    def test_statuses_reply_to_original_photo_card_after_multiple_transitions(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            item=sample()
+            m.watch_row(conn,item,"open",message_id=42)
+            m.controls.pending(conn,item,42,attached=True)
+            sent=[]
+            def fake_api(token,method,params):
+                sent.append((method,dict(params)))
+                return {"message_id":80+len(sent)}
+            with patch.object(m,"api",fake_api),patch.object(m.monitor,"save_detail",lambda x:None):
+                for newstate in ("reviewing","open","reviewing"):
+                    with patch.object(m.monitor,"validate_detail",lambda x,status=newstate:sample(status)):
+                        self.assertEqual(m.refresh_watch(conn,"token","123",force=True),(1,0))
+            self.assertEqual([method for method,_ in sent],["sendMessage"]*3)
+            self.assertEqual([params.get("reply_to_message_id") for _,params in sent],["42"]*3)
+            self.assertEqual(conn.execute("SELECT message_id FROM watch").fetchone()[0],83)
+            self.assertEqual(m.original_card_id(conn,item["assignment_id"]),42)
+            conn.close()
+
+    def test_status_reply_uses_upgraded_photo_card_not_deleted_album(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            item=sample()
+            m.controls.pending(conn,item,41,attached=False)
+            conn.execute("UPDATE controls SET control_message_id=45 WHERE assignment_id=?",
+                         (item["assignment_id"],))
+            conn.commit()
+            self.assertEqual(m.original_card_id(conn,item["assignment_id"]),45)
+            conn.close()
+
+    def test_status_without_original_card_never_quotes_previous_status(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            m.watch_row(conn,sample(),"open",message_id=65)
+            sent=[]
+            def fake(token,method,fields):
+                sent.append(fields)
+                return {"message_id":90}
+            with patch.object(m,"api",fake),patch.object(m.monitor,"save_detail",lambda a:None):
+                with patch.object(m.monitor,"validate_detail",lambda a:sample("reviewing")):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+            self.assertNotIn("reply_to_message_id",sent[0])
+            conn.close()
+
+    def test_deleted_card_falls_back_to_plain_notification(self):
+        calls=[]
+        def fake(token,method,fields):
+            calls.append(dict(fields))
+            if len(calls)==1:raise RuntimeError("Telegram HTTP 400 on sendMessage")
+            return {"message_id":103}
+        with patch.object(m,"api",fake):
+            mid=m.send_status("token","chat",sample("reviewing"),"reviewing",reply_to_id=42)
+        self.assertEqual(mid,103)
+        self.assertEqual(calls[0]["reply_to_message_id"],"42")
+        self.assertNotIn("reply_to_message_id",calls[1])
+        self.assertEqual(calls[0]["text"],calls[1]["text"])
+
     def test_reopen_notice_is_fast_text_and_not_repeated(self):
         with tempfile.TemporaryDirectory() as t:
             conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")

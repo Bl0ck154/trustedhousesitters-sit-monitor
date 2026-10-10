@@ -74,3 +74,37 @@ A definitive Telegram send failure leaves the old status intact for a later retr
     */2 * * * * /bin/bash /path/to/run-status.sh
 
 Runtime state (logs, tokens, chat ID, applications) remains under ignored `data/`.
+
+
+## Threaded status notifications and safe network fallback
+
+All status-change messages (Reviewing, reopened Open, Confirmed or Removed)
+reply directly to the **active original photo card**, not to another status
+message. This works for migrated cards as well: those were edited to contain
+the photo, whereas their old album posts may have been deleted. If Telegram
+definitively reports that the original message is unavailable, the important
+notification is still sent without a reply.
+
+The monitor defaults to direct HTTPS access to **public, unauthenticated**
+listing pages. Optional environment variables:
+
+- `THS_FETCH_MODE=http` — direct public HTTP requests (default).
+- `THS_BROWSER_FALLBACK=1` — retry an ordinary network error or a public
+  page whose structured-data format changed using Obscura Lite.
+- `THS_PROXY_FALLBACK=1` — on transient network failure only, try the
+  canonical local proxy broker at `http://127.0.0.1:20140` **if** its
+  validated TrustedHousesitters target pool has working upstreams.
+
+These flags belong in a private `data/config.env` file. No proxy passwords,
+login cookies, personal accounts or session tokens are sent through public
+proxies. HTTP 403, HTTP 429 and detected security challenges **must not**
+trigger a proxy or browser fallback. Instead, a shared access cooldown pauses
+network calls for 1 hour on 429 and 6 hours for 403/challenges. This avoids
+hammering the site or attempting to circumvent restrictions. A registered
+proxy target is not proof of a working upstream: the broker may have no
+validated pool, in which case no proxy retry occurs.
+
+The optional shared proxy broker is configured in a different, private
+infrastructure repository. This public project does not include broker
+credentials or dynamic proxy lists. All Cron launchers load the private
+config file before starting.

@@ -98,12 +98,42 @@ def status_caption(item, newstate):
         lines.append("📨 Заявок: "+str(count))
     return "\n".join(lines)
 
-def send_status(token, chat_id, item, state):
+def original_card_id(conn, assignment_id):
+    """Stable original listing card, not the newest status notification.
+
+    Older companion messages were upgraded in place into standalone photo
+    cards; their initial media-group messages may have been deleted.
+    Prefer the active control_message_id (now the photo card) and fall back to
+    album_message_id. Never infer from watch.message_id, which is updated by
+    subsequent status notifications.
+    """
+    row=conn.execute("""SELECT control_message_id,album_message_id FROM controls
+                        WHERE assignment_id=?""",(str(assignment_id),)).fetchone()
+    if not row:
+        return None
+    current_photo_card=row[0] or row[1]
+    return int(current_photo_card) if current_photo_card is not None else None
+
+
+def send_status(token, chat_id, item, state, reply_to_id=None):
     body = status_caption(item,state)
     if not body:
         raise ValueError("cannot notify unknown status")
-    result = api(token,"sendMessage",{"chat_id":chat_id,"text":body,
-                                       "parse_mode":"HTML","disable_web_page_preview":"true"})
+    args={"chat_id":chat_id,"text":body,
+          "parse_mode":"HTML","disable_web_page_preview":"true"}
+    if reply_to_id is not None:
+        args["reply_to_message_id"]=str(reply_to_id)
+    try:
+        result=api(token,"sendMessage",args)
+    except RuntimeError as exc:
+        # Original message can be deleted or become unavailable. Do not lose
+        # a time-critical status alert just because Telegram rejects a reply.
+        # Retry only on definitive HTTP 400: unknown network failures may
+        # indicate the first message was actually delivered.
+        if reply_to_id is None or "Telegram HTTP 400" not in str(exc):
+            raise
+        args.pop("reply_to_message_id",None)
+        result=api(token,"sendMessage",args)
     if not isinstance(result,dict) or not isinstance(result.get("message_id"),int):
         raise RuntimeError("Unexpected status message response")
     return result["message_id"]
@@ -200,7 +230,8 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             # failure must NOT silently consume the event: leave old status in
             # watch and retry on a later status run. An ambiguous network timeout
             # can occasionally produce a duplicate but not a missing alert.
-            mid=send_status(token,chat_id,actual,new)
+            mid=send_status(token,chat_id,actual,new,
+                            reply_to_id=original_card_id(conn,aid))
             watch_row(conn,actual,new)
             conn.execute("UPDATE watch SET message_id=? WHERE assignment_id=?",(mid,aid))
             conn.commit()
