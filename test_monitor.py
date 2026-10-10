@@ -46,6 +46,18 @@ class MonitorTests(unittest.TestCase):
             i["location"]["countryName"] = "United Kingdom"
             self.assertFalse(m.relevant(i,a))
 
+    def test_unknown_transit_wifi_must_not_exclude_cats(self):
+        # The search page often omits these fields even for valid cat sits.
+        cats={"assignment_id":"201","status":"open","pets":{"cat":2},
+              "internet":None,"transport_accessible":False,
+              "transit_warning":False,"eligible_alert":False}
+        self.assertTrue(m.prefilter_detail(cats))
+        self.assertEqual(m.detail_candidates([cats],10),[cats])
+        self.assertFalse(m.prefilter_detail({**cats,"pets":{"cat":2,"dog":1}}))
+        self.assertFalse(m.prefilter_detail({**cats,"pets":{"cat":1,"horse":1}}))
+        self.assertFalse(m.prefilter_detail({**cats,"transit_warning":True}))
+        self.assertFalse(m.prefilter_detail({**cats,"status":"reviewing"}))
+
     def test_only_matching_open_sits_get_detail_fetch(self):
         from unittest.mock import patch
         import sys, json

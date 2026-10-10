@@ -193,7 +193,8 @@ def detail_cache(candidate, ttl_seconds=1800):
         checked=dt.datetime.fromisoformat(cached["observed_at"])
         age=(dt.datetime.now(dt.timezone.utc)-checked).total_seconds()
         if age<0 or age>ttl_seconds:return None
-        for key in ("assignment_id","listing_id","start","end","status","title","application_count"):
+        for key in ("assignment_id","listing_id","start","end","status",
+                    "title","application_count","pets","transit_warning"):
             if cached.get(key)!=candidate.get(key):return None
         if not cached.get("verified_by_detail"):return None
         return cached
@@ -277,14 +278,30 @@ def collect(end_date=None, max_pages=55, delay=0.4, include_reviewing=True, requ
         totals[label] = total
     return found, totals, pages, errors
 
-def detail_candidates(candidates, limit):
-    """Only detail-fetch sit assignments that already meet public-summary criteria.
+def prefilter_detail(row):
+    """Exclude only definitively unsuitable sits using public search metadata.
 
-    Unmatched Open sits remain lightweight search observations, not page fetches.
-    The delivery watcher separately validates previously sent sits.
+    Search summaries omit Wi-Fi/transit properties for some listings. Those
+    unknowns MUST be resolved on the detail page, not treated as negatives.
     """
-    return [row for row in candidates
-            if row["status"] == "open" and row.get("eligible_alert")][:limit]
+    if row["status"] != "open":
+        return False
+    pets=row.get("pets") or {}
+    if not pets.get("cat") or any(number for kind, number in pets.items()
+                                  if kind != "cat"):
+        return False
+    # Negative transport/Wi-Fi constraints are only enforced when explicitly known.
+    if row.get("transit_warning"):
+        return False
+    internet=row.get("internet")
+    if internet is not None and internet not in ("highSpeed","basic"):
+        return False
+    return True
+
+
+def detail_candidates(candidates, limit):
+    """Fetch only Open cats-only candidates; verify unknown Wi-Fi/transit later."""
+    return [row for row in candidates if prefilter_detail(row)][:limit]
 
 
 def storage(db, confirmed, commit):
@@ -343,7 +360,9 @@ def main():
     tracked_other = [c for c in candidates if c["status"] != "open"]
     # Keep status-only observations for nonmatching Open sits, without
     # opening their detail pages or archiving their full descriptions.
-    unmatched_open=[c for c in candidates if c["status"] == "open" and not c.get("eligible_alert")]
+    selected_ids={c["assignment_id"] for c in selected}
+    unmatched_open=[c for c in candidates if c["status"] == "open"
+                    and c["assignment_id"] not in selected_ids]
     confirmed = verified_open + tracked_other + unmatched_open
     confirmed.sort(key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
     now = dt.datetime.now(dt.timezone.utc).isoformat()
