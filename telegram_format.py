@@ -98,8 +98,8 @@ def caption(item):
         rows.append("📝 "+esc(brief_duties))
     if rating["flags"]:
         rows.append("⚠️ "+esc(" · ".join(f["label"] for f in rating["flags"][:2])))
-    if isinstance(applicant,int):
-        rows.append(f"📨 Заявок: {applicant}")
+    if isinstance(applicant,int) and applicant>0:
+        rows.append(f"📨 Публічний лічильник: {applicant} (не статус твоєї заявки)")
     msg="\n".join(rows)
     if len(html.unescape(msg))>MAX_CAPTION:
         rows=[row for row in rows if not row.startswith("🏠 ")]
@@ -135,8 +135,9 @@ def sections(item):
         meta.append("🏠 Тип житла: "+{"apartment":"квартира","house":"будинок","flat":"квартира"}.get(kind,kind))
     minutes=time_label(item)
     if minutes:meta.append("⏱ Тварини можуть бути самі "+minutes)
-    if isinstance(item.get("application_count"),int):
-        meta.append("📨 Заявок: "+str(item["application_count"]))
+    count=item.get("application_count")
+    if isinstance(count,int) and count>0:
+        meta.append("📨 Публічний лічильник: "+str(count)+" (може відставати)")
     out=[("📋 Загальна інформація","\n".join(meta))]
     warnings=quality.priority(item)["flags"]
     if warnings:

@@ -301,14 +301,29 @@ def validate_detail(candidate):
     for section in ("publishedAssignment", "openAssignments", "upcomingAssignments", "pastAssignments"):
         for row in item.get(section) or []:
             if str(row.get("id")) == wanted:
-                if row.get("isConfirmed"):
-                    st = "confirmed"
+                # Different embedded listing sections can disagree about
+                # application availability in the same HTML response.
+                matching=[(key,a) for key in (
+                    "publishedAssignment","openAssignments",
+                    "upcomingAssignments","pastAssignments")
+                    for a in (item.get(key) or [])
+                    if str(a.get("id"))==wanted]
+                unique_states={(bool(a.get("isConfirmed")),
+                                bool(a.get("isReviewing")))
+                               for _,a in matching}
+                apply_flags={a.get("canApply") for _,a in matching
+                             if isinstance(a.get("canApply"),bool)}
+                if len(unique_states)>1 or len(apply_flags)>1:
+                    st="unknown"
+                elif row.get("isConfirmed"):
+                    st="confirmed"
                 elif row.get("isReviewing"):
-                    st = "reviewing"
-                elif section == "publishedAssignment":
-                    st = "open"
+                    st="reviewing"
+                elif section in ("publishedAssignment","openAssignments"):
+                    # 'canApply=false' is inconsistent with an Open sit.
+                    st="open" if apply_flags!={False} else "unknown"
                 else:
-                    st = "unknown"
+                    st="unknown"
                 output = enrich_detail(fingerprint(item, row, st), item)
                 output["verified_by_detail"] = True
                 output["eligible_alert"] = plan.should_alert(output,get_confirmed())

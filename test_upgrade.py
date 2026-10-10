@@ -25,6 +25,15 @@ def sample(status="open"):
                           "https://res.cloudinary.com/trustedhousesitters/image/upload/t_highres_2mp,f_auto/v1/remote_media/media/photo/b.jpg",
                           "https://res.cloudinary.com/trustedhousesitters/image/upload/t_highres_2mp,f_auto/v1/remote_media/media/photo/c.jpg"]}
 class Tests(unittest.TestCase):
+    def confirm_transition(self,conn,token,chat):
+        # First result is tentative. Two independent observations are
+        # required; mock zero waiting for deterministic unit tests.
+        with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+            first=m.refresh_watch(conn,token,chat,force=True)
+            self.assertEqual(first,(0,0))
+            return m.refresh_watch(conn,token,chat,force=True)
+
+
     def test_format_and_clickable_title(self):
         txt=m.caption(sample())
         self.assertIn("<a href=",txt)
@@ -57,12 +66,12 @@ class Tests(unittest.TestCase):
                 return {"message_id": 456}
             with patch.object(m,"api",fake_api),patch.object(m.monitor,"save_detail",lambda a:None):
                 with patch.object(m.monitor,"validate_detail",lambda a:sample("reviewing")):
-                    self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
+                    self.assertEqual(self.confirm_transition(con,"tok","123")[0],1)
                     self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],0)
                 with patch.object(m.monitor,"validate_detail",lambda a:sample("confirmed")):
-                    self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
+                    self.assertEqual(self.confirm_transition(con,"tok","123")[0],1)
                 with patch.object(m.monitor,"validate_detail",lambda a:sample("open")):
-                    self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
+                    self.assertEqual(self.confirm_transition(con,"tok","123")[0],1)
             self.assertEqual(outgoing,["sendMessage","sendMessage","sendMessage"])
             con.close()
     def test_statuses_reply_to_original_photo_card_after_multiple_transitions(self):
@@ -79,7 +88,7 @@ class Tests(unittest.TestCase):
             with patch.object(m,"api",fake_api),patch.object(m.monitor,"save_detail",lambda x:None):
                 for newstate in ("reviewing","open","reviewing"):
                     with patch.object(m.monitor,"validate_detail",lambda x,status=newstate:sample(status)):
-                        self.assertEqual(m.refresh_watch(conn,"token","123",force=True),(1,0))
+                        self.assertEqual(self.confirm_transition(conn,"token","123"),(1,0))
             self.assertEqual([method for method,_ in sent],["sendMessage"]*3)
             self.assertEqual([params.get("reply_to_message_id") for _,params in sent],["42"]*3)
             self.assertEqual(conn.execute("SELECT message_id FROM watch").fetchone()[0],83)
@@ -109,7 +118,7 @@ class Tests(unittest.TestCase):
                 return {"message_id":90}
             with patch.object(m,"api",fake),patch.object(m.monitor,"save_detail",lambda a:None):
                 with patch.object(m.monitor,"validate_detail",lambda a:sample("reviewing")):
-                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+                    self.assertEqual(self.confirm_transition(conn,"tok","chat"),(1,0))
             self.assertNotIn("reply_to_message_id",sent[0])
             conn.close()
 
@@ -137,7 +146,7 @@ class Tests(unittest.TestCase):
                 return {"message_id":923}
             with patch.object(m,"api",fake),patch.object(m.monitor,"save_detail",lambda x:None):
                 with patch.object(m.monitor,"validate_detail",lambda x:{**sample("open"),"application_count":2}):
-                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+                    self.assertEqual(self.confirm_transition(conn,"tok","chat"),(1,0))
                     self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,0))
             self.assertEqual([x[0] for x in calls],["sendMessage"])
             self.assertIn("знову відкриті",calls[0][1]["text"])
@@ -157,9 +166,11 @@ class Tests(unittest.TestCase):
                 return {"message_id":777}
             with patch.object(m,"api",flaky),patch.object(m.monitor,"save_detail",lambda x:None):
                 with patch.object(m.monitor,"validate_detail",lambda x:sample("reviewing")):
-                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,1))
-                    self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"open")
-                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,0))
+                    with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+                        self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,1))
+                        self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"open")
+                        self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
                     self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"reviewing")
             self.assertEqual(attempts,["sendMessage","sendMessage"])
             conn.close()
@@ -191,7 +202,8 @@ class Tests(unittest.TestCase):
         item={**sample("reviewing"),"city":"Paris","application_count":8}
         msg=m.status_caption(item,"reviewing")
         self.assertIn("нові заявки не приймаються",msg)
-        self.assertIn("Заявок: 8",msg)
+        self.assertNotIn("Заявок: 8",msg)
+        self.assertIn("не означає, що твою заявку відхилили",msg)
         self.assertIn("trustedhousesitters.com",msg)
 
     def test_unknown_no_false_close(self):
@@ -216,7 +228,8 @@ class Tests(unittest.TestCase):
                 with patch.object(m.monitor,"validate_detail",lambda x:sample("removed")):
                     self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True)[0],0)
                     self.assertEqual(conn.execute("select status from watch").fetchone()[0],"open")
-                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True)[0],1)
+                    with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+                        self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True)[0],1)
                     self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True)[0],0)
             self.assertEqual(calls,["sendMessage"])
             self.assertEqual(conn.execute("select status from watch").fetchone()[0],"removed")

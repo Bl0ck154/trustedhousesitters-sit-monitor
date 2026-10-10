@@ -121,3 +121,11 @@ The listing's primary `photos` array can include images also present under `pets
 **Dismissal**: `Не цікаво` stores a private ignored assignment ID. Dismissed listings are omitted from future notifications, reopening checks, `/options` and daily suggestions, without muting other sits in the same city. The choice can be reversed with the same card's `Повернути в моніторинг` button. A sitter may additionally mark an application rejected independently.
 
 **Old reply keyboard**: send a Telegram Bot API message with `ReplyKeyboardRemove` (the CLI option `telegram_upgrade.py --reset-keyboard` does this) to clear a stale bottom keyboard left from an earlier bot setup. This is distinct from the photo cards' inline controls.
+
+## Fluctuating public application counts
+
+THS public pages can disagree across requests, even seconds apart. One observed assignment in The Hague alternated between Open with 2 or 4 applications and Reviewing with 5 applications. A public counter is not the personal application's status and should never be interpreted as a rejection.
+
+The status watcher now holds each new state as **unconfirmed** until it is observed again at least 65 seconds later. Seeing the prior state in between cancels the candidate. Contradictory flags in the same page are treated as `unknown`, not Open. Messages about Reviewing or reopening omit the unstable numerical applicant count; they explain explicitly that Reviewing does not mean a personal rejection. Newly announced listing cards label a nonzero application count as public and potentially stale.
+
+The pending status is stored in `watch_transitions` within the local SQLite database; a failed Telegram send retains the tentative change for later retry. Tests include alternating Open/Reviewing snapshots with counts 0/2/4/5 from the same assignment.

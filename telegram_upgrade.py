@@ -31,6 +31,7 @@ ROOT = pathlib.Path(__file__).resolve().parent / "data"
 DB = ROOT / "telegram_delivery.sqlite3"
 MIN_RECHECK = dt.timedelta(minutes=4)
 HOT_RECHECK = dt.timedelta(minutes=2)
+STATUS_CONFIRM_DELAY = dt.timedelta(seconds=65)
 
 def shorten(value, maxchars=190):
     s = " ".join(str(value or "").split())
@@ -94,9 +95,13 @@ def status_caption(item, newstate):
         lines.append("⏸ Зараз нові заявки не приймаються. Якщо власник знову відкриє прийом, бот повідомить.")
     if newstate=="open":
         lines.append("⚡ Можна спробувати податися зараз — місця можуть швидко закінчитися.")
-    count=item.get("application_count")
-    if isinstance(count,int):
-        lines.append("📨 Заявок: "+str(count))
+    # THS public counters fluctuate between cached responses for the same
+    # assignment (including temporary zeros); they say nothing about the
+    # private outcome of this sitter's application.
+    if newstate=="reviewing":
+        lines.append("ℹ️ Reviewing не означає, що твою заявку відхилили. Перевір особистий статус у THS.")
+    elif newstate=="open":
+        lines.append("ℹ️ Повторне відкриття не означає, що попередні заявки відхилено або їх стало 0.")
     return "\n".join(lines)
 
 def original_card_id(conn, assignment_id):
@@ -142,6 +147,12 @@ def send_status(token, chat_id, item, state, reply_to_id=None):
 def db_init(conn):
     conn.execute("CREATE TABLE IF NOT EXISTS delivery (event_key TEXT PRIMARY KEY, state TEXT NOT NULL, updated_at TEXT NOT NULL, message_id INTEGER)")
     conn.execute("CREATE TABLE IF NOT EXISTS watch (assignment_id TEXT PRIMARY KEY, status TEXT NOT NULL, payload TEXT NOT NULL, last_checked TEXT, last_change TEXT, message_id INTEGER)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS watch_transitions(
+         assignment_id TEXT PRIMARY KEY,
+         proposed_status TEXT NOT NULL,
+         first_seen TEXT NOT NULL,
+         observation_count INTEGER NOT NULL DEFAULT 1
+    )""")
     controls.init_db(conn)
     conn.commit()
 
@@ -216,19 +227,45 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
                              (clock().isoformat(),aid))
                 conn.commit()
                 continue
+            # Save only the verified detail snapshot. Do not let one stale
+            # public response generate a Telegram transition.
             monitor.save_detail(actual)
-            if actual["status"]=="removed" and old!="removed":
-                missing=int(item.get("_missing_observations",0))+1
-                if missing < 2:
-                    item["_missing_observations"]=missing
-                    watch_row(conn,item,old)
-                    continue
-            if actual["status"]!="removed":
-                actual.pop("_missing_observations",None)
             if actual["status"]==old:
+                conn.execute("DELETE FROM watch_transitions WHERE assignment_id=?",(aid,))
                 watch_row(conn,actual,old)
                 continue
+
             new=actual["status"]
+            pending=conn.execute(
+                "SELECT proposed_status,first_seen,observation_count "
+                "FROM watch_transitions WHERE assignment_id=?",(aid,)).fetchone()
+            if not pending or pending[0]!=new:
+                conn.execute("""INSERT INTO watch_transitions
+                    (assignment_id,proposed_status,first_seen,observation_count)
+                    VALUES (?,?,?,1)
+                    ON CONFLICT(assignment_id) DO UPDATE SET
+                    proposed_status=excluded.proposed_status,
+                    first_seen=excluded.first_seen,observation_count=1""",
+                    (aid,new,now.isoformat()))
+                conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
+                             (clock().isoformat(),aid))
+                conn.commit()
+                print("watch_unconfirmed_transition",aid,old,"->",new,flush=True)
+                continue
+            try:
+                first=dt.datetime.fromisoformat(pending[1])
+            except (ValueError,TypeError):
+                first=now
+            elapsed=now-first
+            if pending[2]<1 or elapsed<STATUS_CONFIRM_DELAY:
+                conn.execute("UPDATE watch_transitions SET observation_count=observation_count+1 "
+                             "WHERE assignment_id=?",(aid,))
+                conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
+                             (clock().isoformat(),aid))
+                conn.commit()
+                continue
+            # Two independent status observations separated by >=65 seconds
+            # confirm a change. Flapping results reset the candidate.
             # Send the important state transition first. A definitive Telegram
             # failure must NOT silently consume the event: leave old status in
             # watch and retry on a later status run. An ambiguous network timeout
@@ -236,6 +273,7 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             mid=send_status(token,chat_id,actual,new,
                             reply_to_id=original_card_id(conn,aid))
             watch_row(conn,actual,new)
+            conn.execute("DELETE FROM watch_transitions WHERE assignment_id=?",(aid,))
             conn.execute("UPDATE watch SET message_id=? WHERE assignment_id=?",(mid,aid))
             conn.commit()
             changed+=1
