@@ -315,22 +315,39 @@ def storage(db, confirmed, commit):
     con = sqlite3.connect(str(db))
     try:
         con.execute("CREATE TABLE IF NOT EXISTS records (assignment_id TEXT PRIMARY KEY, status TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        con.execute("""CREATE TABLE IF NOT EXISTS backup_alert_days(
+                        assignment_id TEXT NOT NULL,local_day TEXT NOT NULL,
+                        PRIMARY KEY(assignment_id,local_day))""")
         outgoing = []
         now = dt.datetime.now(dt.timezone.utc).isoformat()
-        for item in confirmed:
+        local_day=plan.today().isoformat()
+        sent_backup_today=con.execute("SELECT COUNT(*) FROM backup_alert_days WHERE local_day=?",(local_day,)).fetchone()[0]
+        # Highest-value candidates first; a backup wave cannot drown out cats.
+        sorted_rows=sorted(confirmed,key=lambda x:(plan.pet_tier(x)=="B",
+                           -plan.priority(x,get_confirmed())))
+        for item in sorted_rows:
             old = con.execute("SELECT status,payload FROM records WHERE assignment_id=?", (item["assignment_id"],)).fetchone()
             prior = json.loads(old[1]) if old else {}
-            previously_alerted = bool(prior.get("_alert_recorded") or
-                                      (prior.get("eligible_alert") and prior.get("verified_by_detail")))
+            previously_alerted = bool(prior.get("_alert_recorded",
+                prior.get("eligible_alert") and prior.get("verified_by_detail")
+                and plan.pet_tier(prior)=="A"))
             can_alert = (item["status"] == "open" and item.get("eligible_alert")
                          and item.get("verified_by_detail"))
             fresh_open = old is None or old[0] != "open"
+            newly_alerted=False
             if can_alert and (fresh_open or not previously_alerted):
-                outgoing.append(item)
+                is_backup=plan.pet_tier(item)=="B"
+                if not is_backup or sent_backup_today<3:
+                    outgoing.append(item)
+                    newly_alerted=True
+                    if is_backup:
+                        con.execute("INSERT OR IGNORE INTO backup_alert_days(assignment_id,local_day) VALUES (?,?)",
+                                    (item["assignment_id"],local_day))
+                        sent_backup_today+=1
             # A later fast partial scan may see an already notified sit only as
             # an unverified search summary. Never undo the sent-marker or re-alert.
             item["_alert_recorded"]=bool(item["status"] == "open" and
-                                           (can_alert or (old and old[0]=="open" and previously_alerted)))
+                                           (newly_alerted or (old and old[0]=="open" and previously_alerted)))
             con.execute("INSERT INTO records (assignment_id,status,payload,updated_at) VALUES (?,?,?,?) ON CONFLICT(assignment_id) DO UPDATE SET status=excluded.status,payload=excluded.payload,updated_at=excluded.updated_at",
                         (item["assignment_id"],item["status"],json.dumps(item,ensure_ascii=False),now))
         con.commit()

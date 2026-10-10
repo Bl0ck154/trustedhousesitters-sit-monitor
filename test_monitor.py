@@ -98,6 +98,26 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(m.storage(db,[matched],True)),1)
             self.assertEqual(len(m.storage(db,[matched],True)),0)
 
+    def test_urgent_dog_reserve_alerts_are_bounded_per_day(self):
+        from unittest.mock import patch
+        from datetime import date
+        dogs=[]
+        for n in range(5):
+            dogs.append({"assignment_id":str(1200+n),"status":"open",
+                         "start":"2026-10-28","end":"2026-11-08","pets":{"dog":1},
+                         "country":"Germany","city":"Berlin","score":50,
+                         "verified_by_detail":True,"eligible_alert":True})
+        with tempfile.TemporaryDirectory() as td:
+            db=pathlib.Path(td)/"test.sqlite3"
+            with patch.object(m.plan,"today",return_value=date(2026,10,16)):
+                first=m.storage(db,[x.copy() for x in dogs],True)
+                self.assertEqual(len(first),3)
+                second=m.storage(db,[x.copy() for x in dogs],True)
+                self.assertEqual(len(second),0)
+            with patch.object(m.plan,"today",return_value=date(2026,10,17)):
+                remaining=m.storage(db,[x.copy() for x in dogs],True)
+                self.assertEqual(len(remaining),2)
+
     def test_partial_unverified_summary_never_requeues_existing_alert(self):
         i=item()
         row=m.fingerprint(i,i["openAssignments"][0],"open")

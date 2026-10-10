@@ -128,8 +128,11 @@ def priority(item,confirmed=(),today_date=None,start=None):
         score+=12  # Cats are preferable to equally manageable other pets.
     focus=journey_window(confirmed,today_date,start)["focus"]
     if focus:
-        offset=abs((dt.date.fromisoformat(str(item["start"]))-focus[0]).days)
-        score+=max(0,30-offset*3)
+        try:
+            offset=abs((dt.date.fromisoformat(str(item["start"]))-focus[0]).days)
+            score+=max(0,30-offset*3)
+        except (KeyError,ValueError,TypeError):
+            pass
     if item.get("transport_accessible"):score+=12
     if item.get("internet")=="highSpeed":score+=10
     elif item.get("internet") in ("basic",):score+=6
