@@ -6,6 +6,7 @@ import pathlib
 
 import housing_plan as plan
 import housing_state as state
+import housing_preferences as prefs
 
 HOME=pathlib.Path(__file__).resolve().parent
 DATA=HOME/"data"
@@ -26,8 +27,10 @@ def candidates(confirmed=(),today_date=None,applied_ids=()):
     if not p.is_file():return []
     try: payload=json.loads(p.read_text())
     except (ValueError,OSError):return []
+    ignored=prefs.ignored_ids()
     rows=[]
     for x in payload.get("results") or []:
+        if str(x.get("assignment_id")) in ignored:continue
         try:
             if plan.candidate_fit(x,confirmed,today_date):
                 rows.append(x)

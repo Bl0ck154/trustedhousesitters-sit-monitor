@@ -44,11 +44,13 @@ class FastDispatcher:
             action=str(callback.get("data") or "")
             if duplicate and action.startswith("t3:d:"):
                 label="Опис уже надіслано або надсилається"
-            elif duplicate and action.startswith("t3:g:"):
+            elif duplicate and action.startswith(("t3:g:","t3:t:")):
                 label="Галерея вже надіслана або завантажується"
             else:
                 label=("Надсилаю повний опис…" if action.startswith("t3:d:") else
-                       "Надсилаю всі фото…" if action.startswith("t3:g:") else "")
+                       "Надсилаю фотографії…" if action.startswith(("t3:g:","t3:t:")) else
+                       "Заявка зберігається…" if action.startswith(("t3:a:","t3:u:")) else
+                       "Налаштування збережу…" if action.startswith("t3:i:") else "")
             args={"callback_query_id":cid}
             if label:args["text"]=label
             self.api(self.token,"answerCallbackQuery",args)
@@ -69,7 +71,7 @@ class FastDispatcher:
         chat=message.get("chat") or {}
         data=str(cb.get("data") or "")
         # Long, on-demand gallery/description actions must not block each other.
-        suffix=data.split(":")[1] if data.startswith(("t3:d:","t3:g:")) else ""
+        suffix=data.split(":")[1] if data.startswith(("t3:d:","t3:g:","t3:t:")) else ""
         ident=(str(chat.get("id") or ""),str(message.get("message_id") or ""),suffix)
         if not ident[0] or not ident[1]:return False
         data=str(cb.get("data") or "")
@@ -79,7 +81,7 @@ class FastDispatcher:
             # 3 edits or flip 'applied' repeatedly.
             recent_key=(ident,data)
             last=self.recent.get(recent_key)
-            window=30 if data.startswith("t3:d:") else 120 if data.startswith("t3:g:") else 1.0
+            window=30 if data.startswith("t3:d:") else 120 if data.startswith(("t3:g:","t3:t:")) else 1.0
             if last is not None and when-last<window:
                 event_log(event="coalesced_same_button",type=data.split(":")[1] if ":" in data else "other")
                 return False

@@ -38,6 +38,18 @@ def _send_long_action(action,aid,mid,token,chat_id,api_func,db_path):
         if action=="d":
             message_ids=sender.send_description(token,chat_id,item,reply_to=mid,api_func=api_func)
         else:
+            # Historical snapshots may contain only cat photos. Always refresh
+            # the listing and split housing photos from pet photos first.
+            import monitor
+            try:
+                refreshed=monitor.validate_detail(item)
+                item=refreshed
+                monitor.save_detail(refreshed)
+            except Exception:
+                if "pet_photo_urls" not in item:
+                    raise RuntimeError("Photo categories cannot be verified")
+            if action=="t":
+                item={**item,"photo_urls":item.get("pet_photo_urls") or [],"_gallery_kind":"pets"}
             message_ids=sender.send_gallery(token,chat_id,item,reply_to=mid,api_func=api_func)
     except Exception:
         # Ambiguous timeouts must not produce repeat floods. A user can retry
@@ -74,8 +86,11 @@ def handle(update,token,chat_id,api_func=api,db_path=None):
     controls.answer_callback(api_func,token,cid)
     try:mid=int(msg.get("message_id") or 0)
     except (TypeError,ValueError):return "invalid"
-    if action in ("d","g"):
+    if action in ("d","g","t"):
         return _send_long_action(action,aid,mid,token,chat_id,api_func,db_path)
+    if action=="k":
+        from telegram_housing_confirmation import prompt
+        return prompt(aid,mid,token,chat_id,db_path or controls.DB,api_func=api_func)
     with sqlite3.connect(db_path or controls.DB,timeout=6) as conn:
         controls.init_db(conn)
         row=conn.execute("SELECT control_message_id FROM controls WHERE assignment_id=?",(aid,)).fetchone()
@@ -84,16 +99,48 @@ def handle(update,token,chat_id,api_func=api,db_path=None):
         item=controls.load_snapshot(aid,conn)
         if not item:return "missing_details"
         applied=controls.is_applied(aid,conn)
+        if action=="i":
+            import housing_preferences as preferences
+            import housing_state as housing
+            desired=bool(pageno)
+            if desired and housing.stage(conn,aid)=="confirmed":
+                return "confirmed_stay_not_hidden"
+            current=preferences.is_ignored(conn,aid)
+            if current!=desired:
+                preferences.set_ignored(conn,aid,desired)
+            controls.queue_keyboard_update(conn,aid,mid)
+            refreshed=controls.flush_keyboard_updates(conn,token,chat_id,
+                                                       api_func=api_func,limit=1,first_aid=aid,first_mid=mid)
+            return ("dismissed" if desired else "restored") if refreshed else "saved_keyboard_pending"
         if action=="n":return "noop"
-        if action=="a":
-            applied=controls.toggle_application(conn,aid)
+        if action in ("a","u"):
+            import housing_state as housing
+            from datetime import datetime,timezone
+            # Exact desired state; repeated requests cannot invert the user's
+            # choice while Telegram takes too long to redraw the keyboard.
+            desired=(action=="a")
+            if desired:
+                if housing.stage(conn,aid) not in ("applied","talking","confirmed"):
+                    housing.ensure(conn)
+                    with conn:
+                        conn.execute("""INSERT INTO applications(assignment_id,applied_at,stage)
+                                        VALUES (?,CURRENT_TIMESTAMP,'applied')
+                                        ON CONFLICT(assignment_id) DO UPDATE SET stage='applied'""",(aid,))
+            else:
+                if housing.stage(conn,aid)=="confirmed":
+                    return "cannot_remove_confirmed"
+                if housing.stage(conn,aid) in ("applied","talking"):
+                    with conn:
+                        conn.execute("DELETE FROM applications WHERE assignment_id=?",(aid,))
+            applied=controls.is_applied(aid,conn)
             mode="short" if pageno is None else "full"
             cached=controls.card_pages_for(aid,item) if mode=="full" else None
-            keyboard=card.controls(item,mode=mode,page=pageno or 0,photo=photo,applied=applied,total=len(cached) if cached else None)
-            api_func(token,"editMessageReplyMarkup",{"chat_id":str(chat_id),"message_id":str(mid),
-                                                     "reply_markup":keyboard})
+            import housing_preferences as preferences
+            controls.queue_keyboard_update(conn,aid,mid)
+            refreshed=controls.flush_keyboard_updates(conn,token,chat_id,
+                                                       api_func=api_func,limit=1,first_aid=aid,first_mid=mid)
             _VISIBLE.pop((str(chat_id),mid),None)
-            return "application_marked" if applied else "application_unmarked"
+            return ("application_marked" if applied else "application_unmarked") if refreshed else "application_saved_keyboard_pending"
         if action=="c":
             mode="short";pageno=0
         elif action=="p":
@@ -109,7 +156,8 @@ def handle(update,token,chat_id,api_func=api,db_path=None):
         if _VISIBLE.get((str(chat_id),mid))==view:
             return "already_visible"
         text=card.caption(item,mode=mode,page=pageno,pages=pages)
-        keyboard=card.controls(item,mode=mode,page=pageno,photo=idx,applied=applied,total=len(pages) if pages else None)
+        import housing_preferences as preferences
+        keyboard=card.controls(item,mode=mode,page=pageno,photo=idx,applied=applied,total=len(pages) if pages else None,ignored=preferences.is_ignored(conn,aid))
         common={"chat_id":str(chat_id),"message_id":str(mid),"reply_markup":keyboard}
         try:
             if action=="f" and card.cover(item,idx):

@@ -25,6 +25,10 @@ def init_db(conn):
         action TEXT NOT NULL, sent_at REAL NOT NULL, state TEXT NOT NULL,
         sent_messages INTEGER DEFAULT 0,
         PRIMARY KEY(assignment_id,message_id,action))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS keyboard_updates(
+        assignment_id TEXT NOT NULL,message_id INTEGER NOT NULL,
+        requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(assignment_id,message_id))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS applications (
         assignment_id TEXT PRIMARY KEY,applied_at TEXT NOT NULL,
         owner_note TEXT)""")
@@ -59,6 +63,10 @@ def keyboard(item,page=None,total=1,applied=None):
     mode="c" if page is None else str(page)
     rows.append([{"text":"✅ Заявку подано · змінити" if applied else "📨 Я подав заявку",
                   "callback_data":f"th:a:{aid}:{mode}"}])
+    import housing_preferences as preferences
+    hidden=aid in preferences.ignored_ids()
+    rows.append([{"text":"↩️ Повернути в моніторинг" if hidden else "🚫 Не цікаво",
+                 "callback_data":f"t3:i:{aid}:{0 if hidden else 1}"}])
     # Map and official listing are clickable inside the text; no duplicate URL buttons.
     return json.dumps({"inline_keyboard":rows},ensure_ascii=False)
 
@@ -109,6 +117,47 @@ def flush_pending(conn,token,chat_id,max_count=5):
             print("control_delivery_issue",aid,type(ex).__name__)
             errors+=1
     return success,errors
+
+def queue_keyboard_update(conn,aid,message_id):
+    init_db(conn)
+    conn.execute("""INSERT INTO keyboard_updates(assignment_id,message_id)
+                    VALUES (?,?)
+                    ON CONFLICT(assignment_id,message_id) DO UPDATE SET
+                    requested_at=CURRENT_TIMESTAMP""",(str(aid),int(message_id)))
+    conn.commit()
+
+def flush_keyboard_updates(conn,token,chat_id,api_func=api,limit=6,first_aid=None,first_mid=None):
+    import telegram_card as card
+    import housing_preferences as preferences
+    init_db(conn)
+    done=0
+    for aid,mid in conn.execute("""SELECT assignment_id,message_id FROM keyboard_updates
+                                   ORDER BY (assignment_id=? AND message_id=?) DESC,
+                                            requested_at LIMIT ?""",
+                                (str(first_aid or ""),int(first_mid or 0),limit)).fetchall():
+        item=load_snapshot(aid,conn)
+        if not item:
+            conn.execute("DELETE FROM keyboard_updates WHERE assignment_id=? AND message_id=?",(aid,mid))
+            conn.commit()
+            continue
+        kb=card.controls(item,applied=is_applied(aid,conn),
+                         ignored=preferences.is_ignored(conn,aid))
+        try:
+            api_func(token,"editMessageReplyMarkup",{"chat_id":str(chat_id),
+                       "message_id":str(mid),"reply_markup":kb})
+        except RuntimeError as exc:
+            # Telegram may be temporarily slow/unavailable; never undo the DB
+            # state. Cron retries the desired keyboard state later.
+            if "Telegram HTTP 400" in str(exc):
+                conn.execute("DELETE FROM keyboard_updates WHERE assignment_id=? AND message_id=?",(aid,mid))
+                conn.commit()
+            else:
+                print("keyboard_refresh_retry_pending",aid,type(exc).__name__)
+            continue
+        conn.execute("DELETE FROM keyboard_updates WHERE assignment_id=? AND message_id=?",(aid,mid))
+        conn.commit()
+        done+=1
+    return done
 
 def safe_assignment_id(data):
     value=str(data or "")

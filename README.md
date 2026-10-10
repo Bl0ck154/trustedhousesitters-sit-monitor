@@ -108,3 +108,16 @@ The optional shared proxy broker is configured in a different, private
 infrastructure repository. This public project does not include broker
 credentials or dynamic proxy lists. All Cron launchers load the private
 config file before starting.
+
+
+## User choices and separate apartment/pet galleries
+
+Telegram bot sends one photo card with inline controls; the Bot API does not support inline keyboards on a native media group (2–10 items per album). To avoid delaying time-critical announcements, the initial card remains one photo with caption and buttons, while full-resolution native albums are sent on demand.
+
+The listing's primary `photos` array can include images also present under `pets[].photos`. Home images are filtered to exclude pet images. Some valid Cloudinary public IDs lack a `.jpeg` suffix: these extensionless IDs must remain eligible. Two separate buttons show **home photos** and **pet photos**; opening a gallery refreshes current public metadata rather than reusing stale photo URLs.
+
+**Application state**: the `Я подав заявку` action is idempotent. It changes to an explicit cancel button and shows the separate `Мене підтвердили` action only when the application is marked. Manual confirmation validates that an application exists. Telegram edit API can stall or time out; edit timeouts are shortened and unconfirmed keyboard redraws are queued in SQLite for later retries without reverting the application state.
+
+**Dismissal**: `Не цікаво` stores a private ignored assignment ID. Dismissed listings are omitted from future notifications, reopening checks, `/options` and daily suggestions, without muting other sits in the same city. The choice can be reversed with the same card's `Повернути в моніторинг` button. A sitter may additionally mark an application rejected independently.
+
+**Old reply keyboard**: send a Telegram Bot API message with `ReplyKeyboardRemove` (the CLI option `telegram_upgrade.py --reset-keyboard` does this) to clear a stale bottom keyboard left from an earlier bot setup. This is distinct from the photo cards' inline controls.

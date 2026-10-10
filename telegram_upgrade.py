@@ -20,6 +20,7 @@ import telegram_format as fmt
 import telegram_controls as controls
 import telegram_quality as quality
 import telegram_card as card
+import housing_preferences as preferences
 import telegram_media_cache as photo_cache
 import telegram_photo_api as fast_photos
 import dispatch_telegram as legacy
@@ -43,7 +44,7 @@ def label(item):
 def caption(item):
     return fmt.caption(item)
 
-def send_open(token, chat_id, item):
+def send_open(token, chat_id, item,applied=False,ignored=False):
     # One Telegram message for each sit. A single photo allows inline
     # controls; the other two images are browsed using editMessageMedia.
     first=card.cover(item)
@@ -52,7 +53,7 @@ def send_open(token, chat_id, item):
             args={
                 "chat_id":chat_id,"photo":photo_cache.resolve(first),
                 "caption":card.caption(item),"parse_mode":"HTML",
-                "reply_markup":card.controls(item)}
+                "reply_markup":card.controls(item,applied=applied,ignored=ignored)}
             try:
                 if api is ORIGINAL_API and args["photo"]==first:
                     response=fast_photos.send_photo(token,first,args)
@@ -185,7 +186,9 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
     errors=0
     now=clock()
     rows=conn.execute("SELECT assignment_id,status,payload,last_checked FROM watch ORDER BY COALESCE(last_checked,'') ASC").fetchall()
+    ignored_ids=preferences.ignored_in_connection(conn)
     for aid,old,payload,last_check in rows:
+        if str(aid) in ignored_ids:continue
         if max_items<=0:
             break
         item=json.loads(payload)
@@ -245,7 +248,12 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
 def deliver_queue(conn,token,chat_id,events,limit=15):
     sent=skipped=errors=0
     # Show the highest-value city/cat/transit sits first when several arrive together.
+    ignored_ids=preferences.ignored_in_connection(conn)
     for e in sorted(events,key=lambda x:quality.priority(x)['score'],reverse=True):
+        if str(e['assignment_id']) in ignored_ids:
+            delivery_row(conn,e['event_key'],'dismissed')
+            skipped+=1
+            continue
         row=conn.execute("SELECT state FROM delivery WHERE event_key=?",(e["event_key"],)).fetchone()
         if row and row[0] in ("sent","stale","sending","uncertain"):
             skipped+=1
@@ -267,7 +275,7 @@ def deliver_queue(conn,token,chat_id,events,limit=15):
                 continue
             monitor.save_detail(actual)
             delivery_row(conn,e["event_key"],"sending")
-            mid,kind=send_open(token,chat_id,actual)
+            mid,kind=send_open(token,chat_id,actual,applied=controls.is_applied(e["assignment_id"],conn))
             delivery_row(conn,e["event_key"],"sent",mid)
             watch_row(conn,actual,"open",message_id=mid)
             controls.pending(conn,actual,mid,attached=(kind in ("photo_card","text_card")))
@@ -288,6 +296,7 @@ def main():
                      help="One manual media album example; does not change delivery/watch state")
     cli.add_argument("--force-watch",action="store_true")
     cli.add_argument("--status-only",action="store_true")
+    cli.add_argument("--reset-keyboard",action="store_true")
     cli.add_argument("--delivery-only",action="store_true")
     cli.add_argument("--test-card",type=str,default=None,
                      help="Send one test photo card for a locally cached assignment")
@@ -307,6 +316,14 @@ def main():
     chat_id=CHAT_FILE.read_text().strip()
     if not chat_id.lstrip("-").isdigit():
         return 2
+    if args.reset_keyboard:
+        result=api(token,"sendMessage",{"chat_id":chat_id,
+                    "text":"⌨️ Стару клавіатуру прибрано. Керування — кнопками під оголошеннями та командами /plan, /options.",
+                    "reply_markup":json.dumps({"remove_keyboard":True},ensure_ascii=False)})
+        if not isinstance(result,dict) or not isinstance(result.get("message_id"),int):
+            raise RuntimeError("Keyboard reset not acknowledged")
+        print("keyboard_reset_message_id",result["message_id"])
+        return 0
     if args.preview_listing:
         matches=[e for e in events if e["listing_id"]==args.preview_listing]
         if not matches:
@@ -371,6 +388,8 @@ def main():
         changes,watch_errors=(0,0) if args.delivery_only else refresh_watch(conn,token,chat_id,args.force_watch)
         sent,skipped,errors=(0,0,0) if args.status_only else deliver_queue(conn,token,chat_id,events)
         buttons,button_errors=(0,0) if args.status_only else controls.flush_pending(conn,token,chat_id)
+        if not args.status_only:
+            buttons+=controls.flush_keyboard_updates(conn,token,chat_id,limit=6)
         print(json.dumps({"known_events":len(events),"new":sent,"changes":changes,"buttons":buttons,
                           "skipped":skipped,"migrated_existing":seeded,
                           "errors":errors+watch_errors+button_errors},ensure_ascii=False))

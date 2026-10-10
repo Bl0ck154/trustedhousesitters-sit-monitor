@@ -36,7 +36,10 @@ def api(token, method, fields=None):
     try:
         # Never leave incoming Telegram buttons stuck on a 20-second long-poll.
         # The client timeout is slightly longer than getUpdates server wait.
-        poll_timeout=min(12,max(6,int((fields or {}).get("timeout",5))+3)) if method=="getUpdates" else 20
+        poll_timeout=(min(12,max(6,int((fields or {}).get("timeout",5))+3))
+                      if method=="getUpdates" else
+                      5 if method in ("answerCallbackQuery","editMessageReplyMarkup")
+                      else 20)
         with urllib.request.urlopen(req, timeout=poll_timeout) as stream:
             data = json.load(stream)
     except urllib.error.HTTPError as error:

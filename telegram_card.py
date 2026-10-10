@@ -104,21 +104,30 @@ def detail_pages(item):
     if buf:pages.append(render(buf))
     return pages or [header]
 
-def controls(item,mode="short",page=0,photo=0,applied=False,total=None):
+def controls(item,mode="short",page=0,photo=0,applied=False,total=None,ignored=False):
     """Stable simple keyboard: no repeated editing of photo/text captions."""
     aid=str(item["assignment_id"])
     count=len(item.get("photo_urls") or [])
     rows=[[{"text":"📖 Надіслати повний опис","callback_data":f"t3:d:{aid}"}]]
     if count:
-        rows.append([{"text":f"🖼 Усі фото ({count})","callback_data":f"t3:g:{aid}"}])
-    rows.append([{"text":"✅ Заявку подано" if applied else "📨 Я подав заявку",
-                  "callback_data":f"t3:a:{aid}"}])
-    rows.append([{"text":"🏠 Мене підтвердили","callback_data":f"t3:k:{aid}"}])
+        rows.append([{"text":f"🏡 Фото житла ({count})","callback_data":f"t3:g:{aid}"}])
+    pets_count=len(item.get("pet_photo_urls") or [])
+    if pets_count:
+        rows.append([{"text":f"🐾 Фото тварин ({pets_count})",
+                      "callback_data":f"t3:t:{aid}"}])
+    rows.append([{"text":"✅ Заявку подано · скасувати" if applied else "📨 Я подав заявку",
+                  "callback_data":f"t3:{'u' if applied else 'a'}:{aid}"}])
+    if applied:
+        rows.append([{"text":"🏠 Мене підтвердили","callback_data":f"t3:k:{aid}"}])
+    rows.append([{"text":"↩️ Повернути в моніторинг" if ignored else "🚫 Не цікаво",
+                  "callback_data":f"t3:i:{aid}:{0 if ignored else 1}"}])
     return json.dumps({"inline_keyboard":rows},ensure_ascii=False)
 
 def parse(data):
     data=str(data or "")
-    match=re.fullmatch(r"t3:(d|g|a|k):([0-9]{1,15})",data)
+    ignored_action=re.fullmatch(r"t3:i:([0-9]{1,15}):([01])",data)
+    if ignored_action:return "i",ignored_action.group(1),int(ignored_action.group(2)),0
+    match=re.fullmatch(r"t3:(d|g|t|a|u|k):([0-9]{1,15})",data)
     if match:return match.group(1),match.group(2),None,0
     m=re.fullmatch(r"t2:(p|f|a):([0-9]{1,15}):(s|[0-9]{1,3}):([0-9]{1,5})",data)
     if m:

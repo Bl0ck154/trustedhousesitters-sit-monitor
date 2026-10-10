@@ -77,6 +77,8 @@ def update(conn,aid,target,archive_dir=None):
     if not item:
         raise ValueError("Невідоме оголошення")
     old=stage(conn,aid)
+    if target=="confirmed" and old not in ("applied","talking","confirmed"):
+        raise ValueError("Спочатку познач заявку як подану")
     if target=="confirmed":
         try:
             dt.date.fromisoformat(str(item["start"]))

@@ -17,6 +17,7 @@ import http_state
 from functools import lru_cache
 import housing_plan as plan
 import housing_state as housing
+import housing_preferences as preferences
 
 BASE = "https://www.trustedhousesitters.com"
 EUROPE = BASE + "/house-and-pet-sitting-assignments/europe/"
@@ -215,7 +216,7 @@ def photo_urls(item):
     urls = []
     for p in chosen:
         pid = str(p.get("publicId") or "")
-        if not re.fullmatch(r"remote_media/media/photo/[a-zA-Z0-9/_-]+\.(?:jpe?g|png|webp)", pid):
+        if not re.fullmatch(r"remote_media/media/photo/[a-zA-Z0-9/_-]+(?:\.(?:jpe?g|png|webp))?", pid):
             continue
         u = "https://res.cloudinary.com/trustedhousesitters/image/upload/t_highres_2mp,f_auto/v1/" + pid
         if u not in urls:
@@ -224,7 +225,12 @@ def photo_urls(item):
     return urls
 
 def enrich_detail(out, item):
-    out["photo_urls"] = photo_urls(item)
+    pet_images=[p for pet in (item.get("pets") or [])
+                if isinstance(pet,dict) for p in (pet.get("photos") or [])]
+    pet_urls=photo_urls({"photos":pet_images})
+    all_urls=photo_urls(item)
+    out["photo_urls"]=[url for url in all_urls if url not in set(pet_urls)]
+    out["pet_photo_urls"]=pet_urls
     out["introduction"] = str(item.get("introduction") or "")
     out["responsibilities"] = str(item.get("responsibilities") or "")
     out["pet_care"] = str(item.get("petCareResponsibilities") or "")
@@ -376,7 +382,8 @@ def prefilter_detail(row):
 
 def detail_candidates(candidates, limit):
     """Fetch only Open cats-only candidates; verify unknown Wi-Fi/transit later."""
-    return [row for row in candidates if prefilter_detail(row)][:limit]
+    ignored=preferences.ignored_ids()
+    return [row for row in candidates if str(row["assignment_id"]) not in ignored and prefilter_detail(row)][:limit]
 
 
 def storage(db, confirmed, commit):

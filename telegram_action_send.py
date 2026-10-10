@@ -175,7 +175,8 @@ def send_gallery(token,chat_id,item,reply_to=None,api_func=api):
     if not total:raise RuntimeError("Listing has no available photos")
     for start in range(0,total,10):
         chunk=sources[start:start+10]
-        label=f"🖼 {item.get('city') or 'Житло'} · фото {start+1}–{start+len(chunk)} із {total}"
+        kind="тварин" if item.get("_gallery_kind")=="pets" else "житла"
+        label=f"🖼 Фото {kind}: {item.get('city') or 'Житло'} · {start+1}–{start+len(chunk)} із {total}"
         if len(chunk)==1:
             url=chunk[0]
             fields={"chat_id":str(chat_id),"photo":cache.resolve(url),"caption":label}

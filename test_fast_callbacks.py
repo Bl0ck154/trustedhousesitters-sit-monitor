@@ -35,7 +35,7 @@ class FastTests(unittest.TestCase):
  def test_many_photos_and_no_url_buttons(self):
     x=item(26)
     markup=card.controls(x,photo=11)
-    self.assertIn("Усі фото (26)",markup)
+    self.assertIn("Фото житла (26)",markup)
     self.assertIn("t3:g:2123228",markup)
     self.assertIn("t3:d:2123228",markup)
     self.assertNotIn("google.com",markup)

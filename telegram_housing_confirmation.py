@@ -20,6 +20,8 @@ def prompt(aid,mid,token,chat_id,db_path,api_func=api):
         if not item:return "not_found"
         current=state.stage(conn,aid)
         if current=="confirmed":return "already_confirmed"
+        if current not in ("applied","talking"):
+            return "application_required"
         place=str(item.get("city") or "")+", "+str(item.get("country") or "")
         period=str(item.get("start") or "?")+"–"+str(item.get("end") or "?")
         body=("🏠 <b>Підтвердити власне проживання?</b>\n"
