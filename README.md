@@ -5,7 +5,7 @@ Unofficial self-hosted personal-use monitor for publicly accessible house-sittin
 ## What it does
 
 - Finds house sits within a rolling date window and filters by country, pet type, transport and Wi-Fi.
-- Reads embedded JSON in public HTML via HTTPS, without a browser by default.
+- Reads embedded JSON in public HTML via HTTPS, without a browser by default. Full scan every 30 minutes plus a quick new-listing lane every 5 minutes.
 - Uses SQLite history and a 30-minute detail cache for unchanged open listings.
 - Revalidates listings before alerting, independently tracks status changes and deduplicates announcements.
 - Sends Telegram photo cards, detailed formatted descriptions, native photo albums, and approximate-location links.
@@ -22,7 +22,7 @@ Example environment variables:
 
 Create data/config.env with these variables; this file is never committed. To pair Telegram, run setup_telegram.py with Python 3 and follow its instructions. Never share or commit the bot token.
 
-Use run-hourly.sh for scans, run-telegram.sh for delivery, and telegram_fast_callbacks.py as a persistent restricted service for Telegram button presses. A 15-minute scan and 5-minute Telegram delivery interval are possible configurations. Adapt the host-specific cron/systemd paths to your machine. If you want to diagnose the browser fallback, install Obscura Lite and set THS_FETCH_MODE=browser, adjusting the local path in monitor.py.
+Use run-hourly.sh for full scans, run-quick.sh for incremental new-listing scans, run-telegram.sh for delivery, and telegram_fast_callbacks.py as a persistent restricted service for Telegram button presses. A 30-minute full scan, 5-minute quick scan and 5-minute Telegram delivery interval are suitable moderate configurations. Adapt the host-specific cron/systemd paths to your machine. If you want to diagnose the browser fallback, install Obscura Lite and set THS_FETCH_MODE=browser, adjusting the local path in monitor.py.
 
 Run tests with:
 

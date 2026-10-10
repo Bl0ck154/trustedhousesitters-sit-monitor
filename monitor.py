@@ -236,7 +236,7 @@ def validate_detail(candidate):
         return output
     raise RuntimeError("Assignment missing on detail page")
 
-def collect(end_date=None, max_pages=55, delay=0.4):
+def collect(end_date=None, max_pages=55, delay=0.4, include_reviewing=True, require_complete=True):
     if end_date is None:
         end_date = (active_window()[1] + dt.timedelta(days=50)).isoformat()
     found = {}
@@ -244,7 +244,7 @@ def collect(end_date=None, max_pages=55, delay=0.4):
     pages = 0
     errors = []
     # Query currently open and reviewing separately, without visiting every country.
-    for reviewing in (False, True):
+    for reviewing in ((False, True) if include_reviewing else (False,)):
         label = "reviewing" if reviewing else "open"
         total = None
         for page in range(1, max_pages + 1):
@@ -272,7 +272,7 @@ def collect(end_date=None, max_pages=55, delay=0.4):
             if total is not None and page * 12 >= total:
                 break
             time.sleep(delay)
-        if total is not None and total > max_pages * 12:
+        if require_complete and total is not None and total > max_pages * 12:
             errors.append(f"{label} results capped at {max_pages*12} of {total}; search incomplete")
         totals[label] = total
     return found, totals, pages, errors
@@ -299,13 +299,18 @@ def storage(db, confirmed, commit):
 def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--commit", action="store_true", help="Save observed status and write a notification queue")
+    cli.add_argument("--quick", action="store_true", help="Check newest open listings only; never replace full scan snapshot")
     cli.add_argument("--max-pages", type=int, default=55)
     cli.add_argument("--end-date", default=None)
     cli.add_argument("--limit-details", type=int, default=100)
     args = cli.parse_args()
     OUT.mkdir(exist_ok=True)
     started = time.monotonic()
-    found, totals, pages, errors = collect(args.end_date, args.max_pages)
+    found, totals, pages, errors = collect(args.end_date,
+        3 if args.quick else args.max_pages,
+        delay=0.15 if args.quick else 0.4,
+        include_reviewing=not args.quick,
+        require_complete=not args.quick)
     candidates = sorted(found.values(), key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
     verified_open = []
     cache_hits=0
@@ -326,14 +331,15 @@ def main():
     confirmed = verified_open + tracked_other
     confirmed.sort(key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
     now = dt.datetime.now(dt.timezone.utc).isoformat()
-    result = {"checked_at": now, "total_server_results": totals, "pages_read": pages,
+    result = {"checked_at": now, "quick_scan":bool(args.quick), "total_server_results": totals, "pages_read": pages,
               "detail_cache_hits":cache_hits, "detail_cache_misses":len(verified_open)-cache_hits,
               "matched": len(candidates), "verified": len(verified_open),
               "tracked_reviewing": sum(c["status"] == "reviewing" for c in tracked_other),
               "open_count": sum(c["status"] == "open" for c in verified_open),
               "elapsed_seconds": round(time.monotonic() - started, 1),
               "errors": errors, "results": confirmed}
-    (OUT / "latest.json").write_text(json.dumps(result,ensure_ascii=False,indent=2))
+    name="quick-latest.json" if args.quick else "latest.json"
+    (OUT / name).write_text(json.dumps(result,ensure_ascii=False,indent=2))
     new = storage(OUT / "history.sqlite3", confirmed, args.commit)
     if new:
         with (OUT / "pending-notifications.jsonl").open("a") as writer:
