@@ -63,8 +63,76 @@ class Tests(unittest.TestCase):
                     self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
                 with patch.object(m.monitor,"validate_detail",lambda a:sample("open")):
                     self.assertEqual(m.refresh_watch(con,"tok","123",force=True)[0],1)
-            self.assertEqual(outgoing,["sendMessage","sendMessage","sendPhoto"])
+            self.assertEqual(outgoing,["sendMessage","sendMessage","sendMessage"])
             con.close()
+    def test_reopen_notice_is_fast_text_and_not_repeated(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            m.watch_row(conn,sample("reviewing"),"reviewing",checked=False)
+            calls=[]
+            def fake(token,method,fields):
+                calls.append((method,fields))
+                return {"message_id":923}
+            with patch.object(m,"api",fake),patch.object(m.monitor,"save_detail",lambda x:None):
+                with patch.object(m.monitor,"validate_detail",lambda x:{**sample("open"),"application_count":2}):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,0))
+            self.assertEqual([x[0] for x in calls],["sendMessage"])
+            self.assertIn("знову відкриті",calls[0][1]["text"])
+            self.assertIn("https://",calls[0][1]["text"])
+            conn.close()
+
+    def test_failed_transition_send_is_retried_not_silently_lost(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            m.watch_row(conn,sample("open"),"open",checked=False)
+            attempts=[]
+            def flaky(token,method,params):
+                attempts.append(method)
+                if len(attempts)==1:
+                    raise RuntimeError("Telegram unavailable")
+                return {"message_id":777}
+            with patch.object(m,"api",flaky),patch.object(m.monitor,"save_detail",lambda x:None):
+                with patch.object(m.monitor,"validate_detail",lambda x:sample("reviewing")):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,1))
+                    self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"open")
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(1,0))
+                    self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"reviewing")
+            self.assertEqual(attempts,["sendMessage","sendMessage"])
+            conn.close()
+
+    def test_priority_watch_poll_every_two_minutes(self):
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            now=dt.datetime(2026,10,10,8,0,tzinfo=dt.timezone.utc)
+            with patch.object(m,"clock",lambda:now):
+                m.watch_row(conn,sample("open"),"open",checked=True)
+            called=[]
+            def fake_fetch(item):
+                called.append(item["assignment_id"])
+                return sample("open")
+            with patch.object(m.monitor,"validate_detail",side_effect=fake_fetch),patch.object(m.monitor,"save_detail",lambda item:None):
+                with patch.object(m,"clock",lambda:now+dt.timedelta(minutes=1)):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat"),(0,0))
+                self.assertFalse(called)
+                with patch.object(m,"clock",lambda:now+dt.timedelta(minutes=3)):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat"),(0,0))
+                self.assertEqual(len(called),1)
+                with patch.object(m,"clock",lambda:now+dt.timedelta(minutes=4)):
+                    self.assertEqual(m.refresh_watch(conn,"tok","chat"),(0,0))
+                self.assertEqual(len(called),1)
+            conn.close()
+
+    def test_paris_reviewing_formatted_as_no_new_applications(self):
+        item={**sample("reviewing"),"city":"Paris","application_count":8}
+        msg=m.status_caption(item,"reviewing")
+        self.assertIn("нові заявки не приймаються",msg)
+        self.assertIn("Заявок: 8",msg)
+        self.assertIn("trustedhousesitters.com",msg)
+
     def test_unknown_no_false_close(self):
         with tempfile.TemporaryDirectory() as t:
             c=sqlite3.connect(pathlib.Path(t)/"db.sqlite3");m.db_init(c)

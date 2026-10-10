@@ -28,7 +28,8 @@ from setup_telegram import api as ORIGINAL_API
 
 ROOT = pathlib.Path(__file__).resolve().parent / "data"
 DB = ROOT / "telegram_delivery.sqlite3"
-MIN_RECHECK = dt.timedelta(minutes=30)
+MIN_RECHECK = dt.timedelta(minutes=4)
+HOT_RECHECK = dt.timedelta(minutes=2)
 
 def shorten(value, maxchars=190):
     s = " ".join(str(value or "").split())
@@ -83,11 +84,19 @@ def status_caption(item, newstate):
     verb = {"reviewing":"⏸ Прийом заявок призупинено",
             "confirmed":"✅ Сіттера обрано",
             "removed":"⛔️ Ці дати прибрано з оголошення",
-            "open":"🔓 Заявки знову відкриті"}.get(newstate)
+            "open":"🔔 Заявки знову відкриті — можна податися"}.get(newstate)
     if not verb:
         return None
-    return "\n".join([verb,label(item),
-                      f"📅 {html.escape(str(item.get('start') or '?'))} — {html.escape(str(item.get('end') or '?'))}"])
+    lines=[verb,label(item),
+           f"📅 {html.escape(str(item.get('start') or '?'))} — {html.escape(str(item.get('end') or '?'))}"]
+    if newstate=="reviewing":
+        lines.append("⏸ Зараз нові заявки не приймаються. Якщо власник знову відкриє прийом, бот повідомить.")
+    if newstate=="open":
+        lines.append("⚡ Можна спробувати податися зараз — місця можуть швидко закінчитися.")
+    count=item.get("application_count")
+    if isinstance(count,int):
+        lines.append("📨 Заявок: "+str(count))
+    return "\n".join(lines)
 
 def send_status(token, chat_id, item, state):
     body = status_caption(item,state)
@@ -158,7 +167,10 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             continue
         if not force and last_check:
             try:
-                if now-dt.datetime.fromisoformat(last_check)<MIN_RECHECK:
+                changed_at=conn.execute("SELECT last_change FROM watch WHERE assignment_id=?",(aid,)).fetchone()[0]
+                recent=bool(changed_at and now-dt.datetime.fromisoformat(changed_at)<dt.timedelta(hours=24))
+                interval=HOT_RECHECK if (old=="reviewing" or recent) else MIN_RECHECK
+                if now-dt.datetime.fromisoformat(last_check)<interval:
                     continue
             except ValueError:
                 pass
@@ -184,17 +196,16 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
                 watch_row(conn,actual,old)
                 continue
             new=actual["status"]
-            # Persist before send, so a timeout/crash never causes repeated notifications.
+            # Send the important state transition first. A definitive Telegram
+            # failure must NOT silently consume the event: leave old status in
+            # watch and retry on a later status run. An ambiguous network timeout
+            # can occasionally produce a duplicate but not a missing alert.
+            mid=send_status(token,chat_id,actual,new)
             watch_row(conn,actual,new)
-            if new=="open":
-                mid,kind=send_open(token,chat_id,actual)
-            else:
-                mid=send_status(token,chat_id,actual,new)
-            if new=="open":
-                controls.pending(conn,actual,mid,attached=(kind in ("photo_card","text_card")))
             conn.execute("UPDATE watch SET message_id=? WHERE assignment_id=?",(mid,aid))
             conn.commit()
             changed+=1
+            print("watch_transition",aid,old,"->",new,flush=True)
         except Exception as ex:
             errors+=1
             print("watch_error",aid,type(ex).__name__,file=sys.stderr)
@@ -245,6 +256,8 @@ def main():
     cli.add_argument("--preview-listing",type=str,default=None,
                      help="One manual media album example; does not change delivery/watch state")
     cli.add_argument("--force-watch",action="store_true")
+    cli.add_argument("--status-only",action="store_true")
+    cli.add_argument("--delivery-only",action="store_true")
     cli.add_argument("--test-card",type=str,default=None,
                      help="Send one test photo card for a locally cached assignment")
     cli.add_argument("--test-description",action="store_true")
@@ -317,13 +330,16 @@ def main():
             return 0
         finally:
             conn.close()
+    if args.status_only and args.delivery_only:
+        print("Choose one service lane",file=sys.stderr)
+        return 2
     conn=sqlite3.connect(DB,timeout=20)
     try:
         db_init(conn)
         seeded=bootstrap_watch(conn,events)
-        changes,watch_errors=refresh_watch(conn,token,chat_id,args.force_watch)
-        sent,skipped,errors=deliver_queue(conn,token,chat_id,events)
-        buttons,button_errors=controls.flush_pending(conn,token,chat_id)
+        changes,watch_errors=(0,0) if args.delivery_only else refresh_watch(conn,token,chat_id,args.force_watch)
+        sent,skipped,errors=(0,0,0) if args.status_only else deliver_queue(conn,token,chat_id,events)
+        buttons,button_errors=(0,0) if args.status_only else controls.flush_pending(conn,token,chat_id)
         print(json.dumps({"known_events":len(events),"new":sent,"changes":changes,"buttons":buttons,
                           "skipped":skipped,"migrated_existing":seeded,
                           "errors":errors+watch_errors+button_errors},ensure_ascii=False))
