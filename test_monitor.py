@@ -46,6 +46,44 @@ class MonitorTests(unittest.TestCase):
             i["location"]["countryName"] = "United Kingdom"
             self.assertFalse(m.relevant(i,a))
 
+    def test_only_matching_open_sits_get_detail_fetch(self):
+        from unittest.mock import patch
+        import sys, json
+        eligible={"assignment_id":"101","listing_id":"21","status":"open",
+                  "eligible_alert":True,"start":"2026-10-28","end":"2026-11-06",
+                  "score":30,"country":"Germany","city":"Hamburg","pets":{"cat":2},"url":"https://example.test/21"}
+        dog={"assignment_id":"102","listing_id":"22","status":"open",
+             "eligible_alert":False,"start":"2026-10-28","end":"2026-11-06",
+             "score":1,"country":"Germany","city":"Berlin","pets":{"dog":1},"url":"https://example.test/22"}
+        mixed={"assignment_id":"103","listing_id":"23","status":"open",
+               "eligible_alert":False,"start":"2026-10-29","end":"2026-11-07",
+               "score":2,"country":"France","city":"Lyon","pets":{"cat":1,"dog":1},"url":"https://example.test/23"}
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(m,"OUT",pathlib.Path(tmp)),patch.object(m,"collect",return_value=(
+                {row["assignment_id"]:row for row in (eligible,dog,mixed)},
+                {"open":3},1,[])),patch.object(m,"validate_detail",side_effect=lambda row:{
+                    **row,"verified_by_detail":True,"photo_urls":[]}),patch.object(sys,"argv",["monitor.py","--quick"]):
+                self.assertEqual(m.main(),0)
+                result=json.loads((pathlib.Path(tmp)/"quick-latest.json").read_text())
+        self.assertEqual(result["open_detail_candidates"],1)
+        self.assertEqual(result["open_details_skipped_by_filter"],2)
+        self.assertEqual(result["verified"],1)
+        self.assertEqual(len(result["results"]),3)
+        self.assertTrue(all(not row.get("verified_by_detail") for row in result["results"]
+                            if not row.get("eligible_alert")))
+
+    def test_open_becomes_eligible_after_prior_summary_only(self):
+        i=item()
+        a=i["openAssignments"][0]
+        matched=m.fingerprint(i,a,"open")
+        matched["verified_by_detail"]=True
+        summary={**matched,"eligible_alert":False,"verified_by_detail":False}
+        with tempfile.TemporaryDirectory() as t:
+            db=pathlib.Path(t)/"history.sqlite3"
+            self.assertFalse(m.storage(db,[summary],True))
+            self.assertEqual(len(m.storage(db,[matched],True)),1)
+            self.assertEqual(len(m.storage(db,[matched],True)),0)
+
     def test_dedup_and_reopening(self):
         i = item()
         a = i["openAssignments"][0]

@@ -277,6 +277,16 @@ def collect(end_date=None, max_pages=55, delay=0.4, include_reviewing=True, requ
         totals[label] = total
     return found, totals, pages, errors
 
+def detail_candidates(candidates, limit):
+    """Only detail-fetch sit assignments that already meet public-summary criteria.
+
+    Unmatched Open sits remain lightweight search observations, not page fetches.
+    The delivery watcher separately validates previously sent sits.
+    """
+    return [row for row in candidates
+            if row["status"] == "open" and row.get("eligible_alert")][:limit]
+
+
 def storage(db, confirmed, commit):
     if not commit:
         return []
@@ -286,8 +296,10 @@ def storage(db, confirmed, commit):
         outgoing = []
         now = dt.datetime.now(dt.timezone.utc).isoformat()
         for item in confirmed:
-            old = con.execute("SELECT status FROM records WHERE assignment_id=?", (item["assignment_id"],)).fetchone()
-            if item["status"] == "open" and item.get("eligible_alert") and item.get("verified_by_detail") and (old is None or old[0] != "open"):
+            old = con.execute("SELECT status,payload FROM records WHERE assignment_id=?", (item["assignment_id"],)).fetchone()
+            prior = json.loads(old[1]) if old else {}
+            previously_alert_eligible = bool(prior.get("eligible_alert") and prior.get("verified_by_detail"))
+            if item["status"] == "open" and item.get("eligible_alert") and item.get("verified_by_detail") and (old is None or old[0] != "open" or not previously_alert_eligible):
                 outgoing.append(item)
             con.execute("INSERT INTO records (assignment_id,status,payload,updated_at) VALUES (?,?,?,?) ON CONFLICT(assignment_id) DO UPDATE SET status=excluded.status,payload=excluded.payload,updated_at=excluded.updated_at",
                         (item["assignment_id"],item["status"],json.dumps(item,ensure_ascii=False),now))
@@ -314,7 +326,8 @@ def main():
     candidates = sorted(found.values(), key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
     verified_open = []
     cache_hits=0
-    for item in [c for c in candidates if c["status"] == "open"][:args.limit_details]:
+    selected=detail_candidates(candidates,args.limit_details)
+    for item in selected:
         try:
             actual = detail_cache(item)
             if actual is None:
@@ -328,14 +341,18 @@ def main():
         time.sleep(0.25)
     # Review status is tracked from the search results; it cannot generate alerts.
     tracked_other = [c for c in candidates if c["status"] != "open"]
-    confirmed = verified_open + tracked_other
+    # Keep status-only observations for nonmatching Open sits, without
+    # opening their detail pages or archiving their full descriptions.
+    unmatched_open=[c for c in candidates if c["status"] == "open" and not c.get("eligible_alert")]
+    confirmed = verified_open + tracked_other + unmatched_open
     confirmed.sort(key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     result = {"checked_at": now, "quick_scan":bool(args.quick), "total_server_results": totals, "pages_read": pages,
               "detail_cache_hits":cache_hits, "detail_cache_misses":len(verified_open)-cache_hits,
+              "open_detail_candidates":len(selected), "open_details_skipped_by_filter":len(unmatched_open),
               "matched": len(candidates), "verified": len(verified_open),
               "tracked_reviewing": sum(c["status"] == "reviewing" for c in tracked_other),
-              "open_count": sum(c["status"] == "open" for c in verified_open),
+              "open_count": sum(c["status"] == "open" and c.get("verified_by_detail") for c in verified_open),
               "elapsed_seconds": round(time.monotonic() - started, 1),
               "errors": errors, "results": confirmed}
     name="quick-latest.json" if args.quick else "latest.json"
@@ -347,7 +364,7 @@ def main():
                 writer.write(json.dumps({"discovered_at":now,**item},ensure_ascii=False)+"\n")
     print(json.dumps({k:v for k,v in result.items() if k != "results"},ensure_ascii=False))
     print("TOP OPEN:")
-    for item in [x for x in confirmed if x["status"] == "open"][:20]:
+    for item in [x for x in verified_open if x["status"] == "open"][:20]:
         print(f"{item['start']} {item['end']} {item['country']} / {item['city']} | {item['pets']} | {item['url']}")
     print(f"new_notifications_queued={len(new)}")
     if not pages or errors:
