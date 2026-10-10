@@ -64,6 +64,11 @@ def fetch_state(url, timeout=12, proxy_url=None):
                 raise FetchError("Unexpected redirect")
             data=response.read(MAX_BYTES+1)
     except urllib.error.HTTPError as exc:
+        if proxy_url and exc.code in (405,502,503,504):
+            # CONNECT-capable public proxies can still fail normal HTML GETs.
+            # Do not confuse their unsupported/rejected proxy route with the
+            # website restricting our normal server IP. No IP cycling follows.
+            raise TransportError("Local proxy route unusable for public GET") from None
         raise AccessRestricted("HTTP "+str(exc.code)+" (not retried)") from None
     except (urllib.error.URLError,TimeoutError,ConnectionError,OSError) as exc:
         raise TransportError("Network error: "+type(exc).__name__) from None

@@ -87,6 +87,15 @@ class NetworkFallbackTests(unittest.TestCase):
                             monitor.get_state(URL)
                         self.assertEqual(fetch.call_count,1)
 
+    def test_broker_405_or_503_is_transport_failure_not_site_cooldown(self):
+        for status in (405,503):
+            with self.subTest(status=status):
+                err=urllib.error.HTTPError(URL,status,"Unusable proxy route",{},None)
+                with patch.object(http_state.urllib.request,"build_opener") as builder:
+                    builder.return_value.open.side_effect=err
+                    with self.assertRaises(http_state.TransportError):
+                        http_state.fetch_state(URL,proxy_url=http_state.LOCAL_BROKER)
+
     def test_rejects_non_broker_proxy(self):
         with self.assertRaises(http_state.FetchError):
             http_state.fetch_state(URL,proxy_url="http://arbitrary-exit:8080")
