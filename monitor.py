@@ -325,6 +325,7 @@ def validate_detail(candidate):
                 else:
                     st="unknown"
                 output = enrich_detail(fingerprint(item, row, st), item)
+                output["public_can_apply"] = next(iter(apply_flags)) if len(apply_flags)==1 else None
                 output["verified_by_detail"] = True
                 output["eligible_alert"] = plan.should_alert(output,get_confirmed())
                 path = (state.get("router") or {}).get("location", {}).get("pathname")

@@ -18,7 +18,8 @@ def sample(status="open"):
             "title":"Three big city cats living their best life",
             "start":"2026-10-28","end":"2026-11-04","nights":7,
             "city":"Hamburg","country":"Germany","pets":{"cat":3},
-            "cats":3,"status":status,"verified_by_detail":True,
+            "cats":3,"status":status,"public_can_apply":status=="open",
+            "application_count":2 if status=="open" else 5,"verified_by_detail":True,
             "eligible_alert":True,"transport_accessible":True,
             "internet":"highSpeed","pet_care":"Feed the cats every day",
             "photo_urls":["https://res.cloudinary.com/trustedhousesitters/image/upload/t_highres_2mp,f_auto/v1/remote_media/media/photo/a.jpg",
@@ -31,6 +32,9 @@ class Tests(unittest.TestCase):
         with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
             first=m.refresh_watch(conn,token,chat,force=True)
             self.assertEqual(first,(0,0))
+            state=conn.execute("SELECT proposed_status FROM watch_transitions LIMIT 1").fetchone()
+            if state and state[0]=="open":
+                self.assertEqual(m.refresh_watch(conn,token,chat,force=True),(0,0))
             return m.refresh_watch(conn,token,chat,force=True)
 
 
@@ -176,6 +180,45 @@ class Tests(unittest.TestCase):
             self.assertEqual(attempts,["sendMessage","sendMessage"])
             conn.close()
 
+    def test_submitted_application_never_gets_reopen_invitation(self):
+        import housing_state as housing
+        with tempfile.TemporaryDirectory() as tmp:
+            conn=sqlite3.connect(pathlib.Path(tmp)/"watch.sqlite3")
+            m.db_init(conn)
+            item=sample("reviewing")
+            m.watch_row(conn,item,"reviewing",checked=False)
+            housing.ensure(conn)
+            conn.execute("INSERT INTO applications(assignment_id,applied_at,stage) VALUES (?,?,'applied')",
+                         (item["assignment_id"],"2026-10-10"))
+            conn.commit()
+            notifications=[]
+            with patch.object(m,"api",lambda *args:notifications.append(args) or {"message_id":100}):
+                with patch.object(m.monitor,"save_detail",lambda x:None):
+                    with patch.object(m.monitor,"validate_detail",lambda x:sample("open")):
+                        with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+                            for _ in range(3):
+                                self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,0))
+            self.assertEqual(notifications,[])
+            self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"open")
+            conn.close()
+
+    def test_false_can_apply_never_triggers_reopened_alert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn=sqlite3.connect(pathlib.Path(tmp)/"watch.sqlite3")
+            m.db_init(conn)
+            m.watch_row(conn,sample("reviewing"),"reviewing",checked=False)
+            notices=[]
+            no_apply={**sample("open"),"public_can_apply":False}
+            with patch.object(m,"api",lambda *args:notices.append(args) or {"message_id":101}):
+                with patch.object(m.monitor,"save_detail",lambda x:None):
+                    with patch.object(m.monitor,"validate_detail",lambda x:no_apply):
+                        with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+                            for _ in range(4):
+                                self.assertEqual(m.refresh_watch(conn,"tok","chat",force=True),(0,0))
+            self.assertFalse(notices)
+            self.assertEqual(conn.execute("SELECT status FROM watch").fetchone()[0],"reviewing")
+            conn.close()
+
     def test_priority_watch_poll_every_two_minutes(self):
         with tempfile.TemporaryDirectory() as t:
             conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
@@ -202,10 +245,12 @@ class Tests(unittest.TestCase):
     def test_paris_reviewing_formatted_as_no_new_applications(self):
         item={**sample("reviewing"),"city":"Paris","application_count":8}
         msg=m.status_caption(item,"reviewing")
-        self.assertEqual(msg,"⏸ Прийом заявок призупинено")
-        self.assertNotIn("Заявок: 8",msg)
-        self.assertNotIn("Заявок:",msg)
-        self.assertNotIn("trustedhousesitters.com",msg)
+        self.assertEqual(msg.splitlines()[0],"⏸ Прийом заявок призупинено")
+        self.assertIn("📍 Paris, Germany",msg)
+        self.assertIn("📅 2026-10-28 — 2026-11-04",msg)
+        self.assertIn("📨 Заявок на сайті: 8",msg)
+        self.assertIn("trustedhousesitters.com",msg)
+        self.assertEqual(len(msg.splitlines()),5)
 
     def test_unknown_no_false_close(self):
         with tempfile.TemporaryDirectory() as t:

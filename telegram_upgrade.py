@@ -83,10 +83,30 @@ def send_open(token, chat_id, item,applied=False,ignored=False):
     return response["message_id"],"text_card"
 
 def status_caption(item, newstate):
-    return {"reviewing":"⏸ Прийом заявок призупинено",
-            "confirmed":"✅ Сіттера обрано",
-            "removed":"⛔ Дати прибрано",
-            "open":"🔔 Заявки знову відкриті"}.get(newstate)
+    verb={"reviewing":"⏸ Прийом заявок призупинено",
+          "confirmed":"✅ Сіттера обрано",
+          "removed":"⛔ Дати прибрано",
+          "open":"🔔 Заявки знову відкриті"}.get(newstate)
+    if not verb:
+        return None
+    lines=[verb,label(item)]
+    place=", ".join(str(item.get(field) or "").strip() for field in ("city","country")
+                    if str(item.get(field) or "").strip())
+    if place:
+        lines.append("📍 "+html.escape(place))
+    start=str(item.get("start") or "").strip()
+    end=str(item.get("end") or "").strip()
+    if start and end:
+        lines.append("📅 "+html.escape(start)+" — "+html.escape(end))
+    # Public applicationsCount is not the number of remaining places and
+    # says nothing about the outcome of this person's existing application.
+    if newstate in ("open","reviewing"):
+        count=item.get("application_count")
+        if type(count) is int and count>=0:
+            lines.append("📨 Заявок на сайті: "+str(count))
+        else:
+            lines.append("📨 Заявок на сайті: —")
+    return "\n".join(lines)
 
 def original_card_id(conn, assignment_id):
     """Stable original listing card, not the newest status notification.
@@ -109,10 +129,9 @@ def send_status(token, chat_id, item, state, reply_to_id=None):
     body = status_caption(item,state)
     if not body:
         raise ValueError("cannot notify unknown status")
-    # A reply already quotes the original card. Standalone messages need
-    # the listing link, but not dates, counters or instructions.
+    # Always display a clickable title, including when replying to the card.
     args={"chat_id":chat_id,
-          "text":body if reply_to_id is not None else body+"\n"+label(item),
+          "text":body,
           "parse_mode":"HTML","disable_web_page_preview":"true"}
     if reply_to_id is not None:
         args["reply_to_message_id"]=str(reply_to_id)
@@ -126,7 +145,7 @@ def send_status(token, chat_id, item, state, reply_to_id=None):
         if reply_to_id is None or "Telegram HTTP 400" not in str(exc):
             raise
         args.pop("reply_to_message_id",None)
-        args["text"]=body+"\n"+label(item)
+        args["text"]=body
         result=api(token,"sendMessage",args)
     if not isinstance(result,dict) or not isinstance(result.get("message_id"),int):
         raise RuntimeError("Unexpected status message response")
@@ -245,7 +264,9 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             except (ValueError,TypeError):
                 first=now
             elapsed=now-first
-            if pending[2]<1 or elapsed<STATUS_CONFIRM_DELAY:
+            # Reopening is more prone to stale public-cache snapshots.
+            needed_prior_observations=2 if new=="open" else 1
+            if pending[2]<needed_prior_observations or elapsed<STATUS_CONFIRM_DELAY:
                 conn.execute("UPDATE watch_transitions SET observation_count=observation_count+1 "
                              "WHERE assignment_id=?",(aid,))
                 conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
@@ -258,6 +279,19 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             # failure must NOT silently consume the event: leave old status in
             # watch and retry on a later status run. An ambiguous network timeout
             # can occasionally produce a duplicate but not a missing alert.
+            if new=="open" and actual.get("public_can_apply") is not True:
+                conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
+                             (clock().isoformat(),aid))
+                conn.commit()
+                continue
+            if new=="open":
+                import housing_state as housing
+                if housing.stage(conn,aid) in ("applied","talking","confirmed"):
+                    watch_row(conn,actual,new)
+                    conn.execute("DELETE FROM watch_transitions WHERE assignment_id=?",(aid,))
+                    conn.commit()
+                    print("watch_reopen_notified_skipped_already_applied",aid,flush=True)
+                    continue
             mid=send_status(token,chat_id,actual,new,
                             reply_to_id=original_card_id(conn,aid))
             watch_row(conn,actual,new)

@@ -133,3 +133,9 @@ The pending status is stored in `watch_transitions` within the local SQLite data
 ## Concise Telegram copy
 
 Status replies have one line only: “⏸ Прийом заявок призупинено”, “🔔 Заявки знову відкриті”, “✅ Сіттера обрано” or “⛔ Дати прибрано”. The original photo card is quoted automatically. Standalone fallback notices additionally link the listing. No guidance, duplicate explanations or unstable applicant counters appear in status updates. Application actions, confirmation and daily reports also avoid unsolicited advice. Listing facts, dates, pet care and owner descriptions remain intact.
+
+## Compact status updates
+
+Each status update includes the status, clickable listing title, city/country, start/end dates and the public number of submitted applications. The counter is not the number of free slots and says nothing about a sitter's private application result.
+
+Reopening notifications require three consistent observations, explicit `canApply=true`, and no already-marked application for that assignment. They still reply to the original photo card.

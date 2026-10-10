@@ -41,17 +41,19 @@ class HagueStatusRegressionTests(unittest.TestCase):
             # Now verify a genuinely sustained reopening, with two separated
             # independent observations. No fluctuating public count is sent.
             with patch.object(dispatcher,"api",fake),patch.object(dispatcher.monitor,"save_detail",lambda x:None):
-                for j in range(2):
+                for j in range(3):
                     at=initial+dt.timedelta(minutes=14+j*2)
                     with patch.object(dispatcher,"clock",lambda d=at:d):
                         with patch.object(dispatcher.monitor,"validate_detail",
-                                          lambda x:{**item,"status":"open","application_count":0}):
-                            expected=(0,0) if j==0 else (1,0)
+                                          lambda x:{**item,"status":"open","application_count":0,"public_can_apply":True}):
+                            expected=(1,0) if j==2 else (0,0)
                             self.assertEqual(dispatcher.refresh_watch(con,"token","chat",force=True),expected)
             self.assertEqual(len(notifications),1)
             message=notifications[0][1]["text"]
             self.assertIn("знову відкриті",message)
-            self.assertNotIn("Заявок: 0",message)
+            self.assertIn("Заявок на сайті: 0",message)
+            self.assertIn("📍 Scheveningen, Netherlands",message)
+            self.assertIn("📅 2026-10-25 — 2026-11-02",message)
             self.assertEqual(message.splitlines()[0],"🔔 Заявки знову відкриті")
             self.assertNotIn("не означає",message)
             self.assertEqual(con.execute("SELECT status FROM watch").fetchone()[0],"open")
