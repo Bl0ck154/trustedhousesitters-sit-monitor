@@ -20,7 +20,7 @@ def _link(item):
         return f'<a href="{html.escape(url,quote=True)}">{name}</a>'
     return name
 
-def candidates(confirmed=(),today_date=None):
+def candidates(confirmed=(),today_date=None,applied_ids=()):
     """Latest full-search data, no extra THS requests for /options or daily."""
     p=DATA/"latest.json"
     if not p.is_file():return []
@@ -32,11 +32,15 @@ def candidates(confirmed=(),today_date=None):
             if plan.candidate_fit(x,confirmed,today_date):
                 rows.append(x)
         except (KeyError,ValueError,TypeError):continue
-    return sorted(rows,key=lambda i:-plan.priority(i,confirmed,today_date))
+    used=set(str(x) for x in applied_ids)
+    return sorted(rows,key=lambda i:(str(i.get("assignment_id")) in used,
+                                     -plan.priority(i,confirmed,today_date)))
 
 def options_text(conn,today_date=None):
     stays=state.confirmed(conn)
-    rows=candidates(stays,today_date)
+    used={a["assignment_id"] for a in state.applications(conn)
+          if a["stage"] in ("applied","talking","confirmed")}
+    rows=candidates(stays,today_date,used)
     a=[x for x in rows if plan.pet_tier(x)=="A"]
     b=[x for x in rows if plan.pet_tier(x)=="B"]
     parts=["🔎 <b>Варіанти житла</b>",
@@ -102,7 +106,8 @@ def daily_text(conn,today_date=None):
     apps=state.applications(conn)
     stage_counts={}
     for a in apps:stage_counts[a["stage"]]=stage_counts.get(a["stage"],0)+1
-    top=candidates(stays,now)
+    used={a["assignment_id"] for a in apps if a["stage"] in ("applied","talking","confirmed")}
+    top=candidates(stays,now,used)
     first=plan.journey_window(stays,now)["focus"]
     lines=["☀️ <b>Житло · "+now.isoformat()+"</b>"]
     if first:
@@ -116,8 +121,11 @@ def daily_text(conn,today_date=None):
     a=[x for x in top if plan.pet_tier(x)=="A"]
     b=[x for x in top if plan.pet_tier(x)=="B"]
     lines.append(f"🐈 Основні: <b>{len(a)}</b> · 🐕 Резерв: <b>{len(b)}</b>")
-    for item in (a[:2] or b[:2]):
-        lines.append("• "+_link(item)+" — "+esc(item.get("city"))+
+    fresh=[x for x in top if str(x.get("assignment_id")) not in used]
+    featured=(fresh or top)[:3]
+    for item in featured:
+        label="🐕 резерв · " if plan.pet_tier(item)=="B" else ""
+        lines.append("• "+label+_link(item)+" — "+esc(item.get("city"))+
                      ", "+esc(item.get("start")))
     if plan.urgent(stays,now) and not stays:
         lines.append("⚠️ Менше 10 днів до потрібного житла: розглядай резерв із собаками та тимчасову кімнату.")
