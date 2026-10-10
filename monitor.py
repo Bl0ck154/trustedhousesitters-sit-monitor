@@ -14,6 +14,9 @@ import urllib.parse
 import re
 from zoneinfo import ZoneInfo
 import http_state
+from functools import lru_cache
+import housing_plan as plan
+import housing_state as housing
 
 BASE = "https://www.trustedhousesitters.com"
 EUROPE = BASE + "/house-and-pet-sitting-assignments/europe/"
@@ -41,11 +44,15 @@ def get_state(url):
     except (ValueError, IndexError) as err:
         raise RuntimeError("Malformed page state") from err
 
+@lru_cache(maxsize=1)
+def get_confirmed():
+    database=OUT/"telegram_delivery.sqlite3"
+    if not database.is_file():return []
+    with sqlite3.connect(database,timeout=6) as conn:
+        return housing.confirmed(conn)
+
 def active_window():
-    today = dt.datetime.now(ZoneInfo('Europe/Vilnius')).date()
-    floor=os.getenv('THS_EARLIEST_START')
-    earliest=max(today,dt.date.fromisoformat(floor)) if floor else today
-    return earliest, today + dt.timedelta(days=30)
+    return plan.search_window(get_confirmed())
 
 def search_url(page, end_date, reviewing=False):
     query = {
@@ -113,9 +120,11 @@ def fingerprint(item, row, status):
     other_pets = sum(n for kind, n in counts.items() if kind not in ("cat", "dog"))
     amenities = item.get("amenities") or {}
     internet = item.get("wifiAvailable") or (amenities.get("wifiType") if isinstance(amenities, dict) else None)
-    preferred = (cats > 0 and dogs == 0 and other_pets == 0 and transit_good and internet in ("highSpeed", "basic"))
-    return {
-        "eligible_alert": preferred, "transport_accessible": transit_good, "verified_by_detail": False,
+    # Final relevance is assessed against the user's uncovered housing dates.
+    # Search-result summaries may omit transit/Wi-Fi; never treat these as
+    # definitive negatives before fetching the details.
+    out = {
+        "eligible_alert": False, "transport_accessible": transit_good, "verified_by_detail": False,
         "listing_id": lid, "assignment_id": str(row["id"]),
         "url": DETAIL.format(id=lid), "title": item.get("title"),
         "city": city, "country": country,
@@ -127,6 +136,8 @@ def fingerprint(item, row, status):
         "minutes_pet_can_be_left_alone": item.get("minutesPetCanBeLeftAlone"),
         "score": (20 if country in PREFERRED else 0) + (30 if cats and not dogs else 0) + (10 if cats else 0) - (10 * dogs) + min(nights, 30) - (100 if transit_bad else 0)
     }
+    out["pet_tier"]=plan.pet_tier(out)
+    return out
 
 def photo_urls(item):
     photos = item.get("photos") or []
@@ -197,6 +208,9 @@ def detail_cache(candidate, ttl_seconds=1800):
                     "title","application_count","pets","transit_warning"):
             if cached.get(key)!=candidate.get(key):return None
         if not cached.get("verified_by_detail"):return None
+        # Time urgency and confirmed stays can change without the listing
+        # changing. Re-evaluate notification eligibility on every scan.
+        cached["eligible_alert"]=plan.should_alert(cached,get_confirmed())
         return cached
     except (OSError,ValueError,KeyError,TypeError):
         return None
@@ -221,6 +235,7 @@ def validate_detail(candidate):
                     st = "unknown"
                 output = enrich_detail(fingerprint(item, row, st), item)
                 output["verified_by_detail"] = True
+                output["eligible_alert"] = plan.should_alert(output,get_confirmed())
                 path = (state.get("router") or {}).get("location", {}).get("pathname")
                 if path and path.endswith(f"/l/{candidate['listing_id']}/"):
                     output["url"] = BASE + path
@@ -284,19 +299,9 @@ def prefilter_detail(row):
     Search summaries omit Wi-Fi/transit properties for some listings. Those
     unknowns MUST be resolved on the detail page, not treated as negatives.
     """
-    if row["status"] != "open":
-        return False
-    pets=row.get("pets") or {}
-    if not pets.get("cat") or any(number for kind, number in pets.items()
-                                  if kind != "cat"):
-        return False
-    # Negative transport/Wi-Fi constraints are only enforced when explicitly known.
-    if row.get("transit_warning"):
-        return False
-    internet=row.get("internet")
-    if internet is not None and internet not in ("highSpeed","basic"):
-        return False
-    return True
+    # Pets with manageable care are fetched in all phases, even before dog
+    # alerts become urgent, so reserve options can appear in daily digests.
+    return plan.candidate_fit(row,get_confirmed())
 
 
 def detail_candidates(candidates, limit):
@@ -315,9 +320,17 @@ def storage(db, confirmed, commit):
         for item in confirmed:
             old = con.execute("SELECT status,payload FROM records WHERE assignment_id=?", (item["assignment_id"],)).fetchone()
             prior = json.loads(old[1]) if old else {}
-            previously_alert_eligible = bool(prior.get("eligible_alert") and prior.get("verified_by_detail"))
-            if item["status"] == "open" and item.get("eligible_alert") and item.get("verified_by_detail") and (old is None or old[0] != "open" or not previously_alert_eligible):
+            previously_alerted = bool(prior.get("_alert_recorded") or
+                                      (prior.get("eligible_alert") and prior.get("verified_by_detail")))
+            can_alert = (item["status"] == "open" and item.get("eligible_alert")
+                         and item.get("verified_by_detail"))
+            fresh_open = old is None or old[0] != "open"
+            if can_alert and (fresh_open or not previously_alerted):
                 outgoing.append(item)
+            # A later fast partial scan may see an already notified sit only as
+            # an unverified search summary. Never undo the sent-marker or re-alert.
+            item["_alert_recorded"]=bool(item["status"] == "open" and
+                                           (can_alert or (old and old[0]=="open" and previously_alerted)))
             con.execute("INSERT INTO records (assignment_id,status,payload,updated_at) VALUES (?,?,?,?) ON CONFLICT(assignment_id) DO UPDATE SET status=excluded.status,payload=excluded.payload,updated_at=excluded.updated_at",
                         (item["assignment_id"],item["status"],json.dumps(item,ensure_ascii=False),now))
         con.commit()
@@ -329,7 +342,7 @@ def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--commit", action="store_true", help="Save observed status and write a notification queue")
     cli.add_argument("--quick", action="store_true", help="Check newest open listings only; never replace full scan snapshot")
-    cli.add_argument("--max-pages", type=int, default=55)
+    cli.add_argument("--max-pages", type=int, default=90)
     cli.add_argument("--end-date", default=None)
     cli.add_argument("--limit-details", type=int, default=100)
     args = cli.parse_args()
@@ -340,7 +353,9 @@ def main():
         delay=0.15 if args.quick else 0.4,
         include_reviewing=not args.quick,
         require_complete=not args.quick)
-    candidates = sorted(found.values(), key=lambda r: (r["status"] != "open", r["start"], -r["score"]))
+    stays=get_confirmed()
+    candidates = sorted(found.values(), key=lambda r: (
+        r["status"] != "open",-plan.priority(r,stays),r["start"]))
     verified_open = []
     cache_hits=0
     selected=detail_candidates(candidates,args.limit_details)

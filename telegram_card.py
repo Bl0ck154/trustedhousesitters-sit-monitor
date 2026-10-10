@@ -39,6 +39,10 @@ def brief_caption(item):
         "🚆 "+("Громадський транспорт є" if item.get("transport_accessible") else "Транспорт уточнити")
           +"   📶 "+e(oldfmt.wifi_label(item)),
     ]
+    if item.get("pet_tier")=="B":
+        row.insert(1,"🐕 <b>Запасний варіант із собаками</b>")
+    elif item.get("pet_tier")=="A" and not (item.get("pets") or {}).get("cat"):
+        row.insert(1,"🐹 <b>Невеликі домашні тварини</b>")
     left=oldfmt.time_label(item)
     if left:row.append("⏱ <b>Можна залишити:</b> "+e(left))
     flags=grade["flags"]
@@ -109,11 +113,12 @@ def controls(item,mode="short",page=0,photo=0,applied=False,total=None):
         rows.append([{"text":f"🖼 Усі фото ({count})","callback_data":f"t3:g:{aid}"}])
     rows.append([{"text":"✅ Заявку подано" if applied else "📨 Я подав заявку",
                   "callback_data":f"t3:a:{aid}"}])
+    rows.append([{"text":"🏠 Мене підтвердили","callback_data":f"t3:k:{aid}"}])
     return json.dumps({"inline_keyboard":rows},ensure_ascii=False)
 
 def parse(data):
     data=str(data or "")
-    match=re.fullmatch(r"t3:(d|g|a):([0-9]{1,15})",data)
+    match=re.fullmatch(r"t3:(d|g|a|k):([0-9]{1,15})",data)
     if match:return match.group(1),match.group(2),None,0
     m=re.fullmatch(r"t2:(p|f|a):([0-9]{1,15}):(s|[0-9]{1,3}):([0-9]{1,5})",data)
     if m:

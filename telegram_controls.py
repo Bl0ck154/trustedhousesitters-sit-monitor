@@ -32,7 +32,12 @@ def init_db(conn):
 
 def is_applied(aid,conn=None):
     if conn is not None:
-        return conn.execute("SELECT 1 FROM applications WHERE assignment_id=?",(str(aid),)).fetchone() is not None
+        try:
+            row=conn.execute("SELECT stage FROM applications WHERE assignment_id=?",(str(aid),)).fetchone()
+            return bool(row and row[0] in ("applied","talking","confirmed"))
+        except sqlite3.OperationalError:
+            return conn.execute("SELECT 1 FROM applications WHERE assignment_id=?",
+                                (str(aid),)).fetchone() is not None
     with sqlite3.connect(DB,timeout=5) as cx:
         init_db(cx)
         return is_applied(aid,cx)
@@ -167,17 +172,27 @@ def answer_callback(api_func,token,callback_id,**options):
         raise
 
 def toggle_application(conn,aid):
+    import housing_state
+    current=housing_state.stage(conn,aid)
+    if current=="confirmed":
+        return True  # a confirmed booking cannot be accidentally unmarked
     now=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())
-    if is_applied(aid,conn):
+    if current in ("applied","talking"):
         conn.execute("DELETE FROM applications WHERE assignment_id=?",(aid,))
         conn.commit()
         return False
-    conn.execute("INSERT OR REPLACE INTO applications (assignment_id,applied_at) VALUES (?,?)",(aid,now))
+    conn.execute("""INSERT INTO applications(assignment_id,applied_at,stage)
+                    VALUES (?,?,'applied')
+                    ON CONFLICT(assignment_id) DO UPDATE SET
+                    applied_at=excluded.applied_at,stage='applied'""",(aid,now))
     conn.commit()
     return True
 
 def handle_callback(update,token,chat_id,api_func=api,db_path=DB):
     query=update.get("callback_query") or {}
+    if str(query.get("data") or "").startswith("t4:"):
+        import telegram_housing_confirmation as confirm
+        return confirm.reply(update,token,chat_id,api_func=api_func,db_path=db_path)
     import telegram_card as card
     if card.parse(query.get("data")):
         from telegram_card_controller import handle

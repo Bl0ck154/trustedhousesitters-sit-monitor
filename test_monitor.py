@@ -25,7 +25,8 @@ class MonitorTests(unittest.TestCase):
     def test_practical_house_sits(self):
         i = item()
         v = m.fingerprint(i, i["openAssignments"][0], "open")
-        self.assertTrue(v["eligible_alert"])
+        self.assertEqual(v["pet_tier"],"A")
+        self.assertFalse(v["eligible_alert"]) # summary alone is not verified
         self.assertTrue(v["transport_accessible"])
         i["homeFeatures"] = ["isNotAccessibleByPublicTransport"]
         v = m.fingerprint(i, i["openAssignments"][0], "open")
@@ -51,9 +52,10 @@ class MonitorTests(unittest.TestCase):
         cats={"assignment_id":"201","status":"open","pets":{"cat":2},
               "internet":None,"transport_accessible":False,
               "transit_warning":False,"eligible_alert":False}
+        cats.update({"start":"2026-10-28","end":"2026-11-08"})
         self.assertTrue(m.prefilter_detail(cats))
         self.assertEqual(m.detail_candidates([cats],10),[cats])
-        self.assertFalse(m.prefilter_detail({**cats,"pets":{"cat":2,"dog":1}}))
+        self.assertTrue(m.prefilter_detail({**cats,"pets":{"cat":2,"dog":1}})) # reserve tier B
         self.assertFalse(m.prefilter_detail({**cats,"pets":{"cat":1,"horse":1}}))
         self.assertFalse(m.prefilter_detail({**cats,"transit_warning":True}))
         self.assertFalse(m.prefilter_detail({**cats,"status":"reviewing"}))
@@ -77,18 +79,18 @@ class MonitorTests(unittest.TestCase):
                     **row,"verified_by_detail":True,"photo_urls":[]}),patch.object(sys,"argv",["monitor.py","--quick"]):
                 self.assertEqual(m.main(),0)
                 result=json.loads((pathlib.Path(tmp)/"quick-latest.json").read_text())
-        self.assertEqual(result["open_detail_candidates"],1)
-        self.assertEqual(result["open_details_skipped_by_filter"],2)
-        self.assertEqual(result["verified"],1)
+        self.assertEqual(result["open_detail_candidates"],3) # dogs held as backup
+        self.assertEqual(result["open_details_skipped_by_filter"],0)
+        self.assertEqual(result["verified"],3)
         self.assertEqual(len(result["results"]),3)
-        self.assertTrue(all(not row.get("verified_by_detail") for row in result["results"]
-                            if not row.get("eligible_alert")))
+        self.assertTrue(all(row.get("verified_by_detail") for row in result["results"]))
 
     def test_open_becomes_eligible_after_prior_summary_only(self):
         i=item()
         a=i["openAssignments"][0]
         matched=m.fingerprint(i,a,"open")
         matched["verified_by_detail"]=True
+        matched["eligible_alert"]=True
         summary={**matched,"eligible_alert":False,"verified_by_detail":False}
         with tempfile.TemporaryDirectory() as t:
             db=pathlib.Path(t)/"history.sqlite3"
@@ -96,11 +98,23 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(m.storage(db,[matched],True)),1)
             self.assertEqual(len(m.storage(db,[matched],True)),0)
 
+    def test_partial_unverified_summary_never_requeues_existing_alert(self):
+        i=item()
+        row=m.fingerprint(i,i["openAssignments"][0],"open")
+        verified={**row,"verified_by_detail":True,"eligible_alert":True}
+        summary={**row,"verified_by_detail":False,"eligible_alert":False}
+        with tempfile.TemporaryDirectory() as t:
+            db=pathlib.Path(t)/"history.sqlite3"
+            self.assertEqual(len(m.storage(db,[verified],True)),1)
+            self.assertEqual(len(m.storage(db,[summary],True)),0)
+            self.assertEqual(len(m.storage(db,[verified],True)),0)
+
     def test_dedup_and_reopening(self):
         i = item()
         a = i["openAssignments"][0]
         open_row = m.fingerprint(i,a,"open")
         open_row["verified_by_detail"] = True
+        open_row["eligible_alert"] = True
         with tempfile.TemporaryDirectory() as t:
             db = pathlib.Path(t)/"history.sqlite3"
             self.assertEqual(len(m.storage(db,[open_row],True)),1)

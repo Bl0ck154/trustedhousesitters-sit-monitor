@@ -37,7 +37,7 @@ def wifi_label(item):
 def pets_label(item):
     pets=item.get("pets") or {}
     if isinstance(pets,dict):
-        names={"cat":("кіт","коти","котів"),"dog":("собака","собаки","собак"),"poultry":("птах","птахи","птахів")}
+        names={"cat":("кіт","коти","котів"),"dog":("собака","собаки","собак"),"poultry":("птах","птахи","птахів"),"rabbit":("кролик","кролики","кроликів"),"hamster":("хом’як","хом’яки","хом’яків"),"guinea pig":("морська свинка","морські свинки","морських свинок"),"small pet":("дрібна тварина","дрібні тварини","дрібних тварин"),"fish":("рибка","рибки","рибок")}
         def localized(kind,n):
             forms=names.get(kind)
             if not forms:return f"{n} {kind}"
