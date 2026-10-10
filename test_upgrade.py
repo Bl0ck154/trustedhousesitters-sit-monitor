@@ -133,7 +133,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(mid,103)
         self.assertEqual(calls[0]["reply_to_message_id"],"42")
         self.assertNotIn("reply_to_message_id",calls[1])
-        self.assertEqual(calls[0]["text"],calls[1]["text"])
+        self.assertTrue(calls[1]["text"].startswith(calls[0]["text"]))
+        self.assertIn("trustedhousesitters.com",calls[1]["text"])
 
     def test_reopen_notice_is_fast_text_and_not_repeated(self):
         with tempfile.TemporaryDirectory() as t:
@@ -201,10 +202,10 @@ class Tests(unittest.TestCase):
     def test_paris_reviewing_formatted_as_no_new_applications(self):
         item={**sample("reviewing"),"city":"Paris","application_count":8}
         msg=m.status_caption(item,"reviewing")
-        self.assertIn("нові заявки не приймаються",msg)
+        self.assertEqual(msg,"⏸ Прийом заявок призупинено")
         self.assertNotIn("Заявок: 8",msg)
-        self.assertIn("не означає, що твою заявку відхилили",msg)
-        self.assertIn("trustedhousesitters.com",msg)
+        self.assertNotIn("Заявок:",msg)
+        self.assertNotIn("trustedhousesitters.com",msg)
 
     def test_unknown_no_false_close(self):
         with tempfile.TemporaryDirectory() as t:

@@ -99,7 +99,8 @@ class HousingDatabaseTests(unittest.TestCase):
                          "text":"/confirm 901"}}
         self.assertEqual(commands.handle_message(msg,"secret","123",api_func=fake,db_path=self.db),"command")
         self.assertEqual(state.stage(self.conn,"901"),"confirmed")
-        self.assertIn("План житла",calls[-1][1]["text"])
+        self.assertIn("Підтверджено для мене",calls[-1][1]["text"])
+        self.assertNotIn("План житла",calls[-1][1]["text"])
         bad={**msg,"message":{**msg["message"],"from":{"id":456}}}
         self.assertEqual(commands.handle_message(bad,"secret","123",api_func=fake,db_path=self.db),"ignored")
     def test_two_step_button_not_confirmed_until_explicit_yes(self):

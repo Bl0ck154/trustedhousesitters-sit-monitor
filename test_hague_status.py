@@ -52,7 +52,8 @@ class HagueStatusRegressionTests(unittest.TestCase):
             message=notifications[0][1]["text"]
             self.assertIn("знову відкриті",message)
             self.assertNotIn("Заявок: 0",message)
-            self.assertIn("не означає",message)
+            self.assertEqual(message.splitlines()[0],"🔔 Заявки знову відкриті")
+            self.assertNotIn("не означає",message)
             self.assertEqual(con.execute("SELECT status FROM watch").fetchone()[0],"open")
             con.close()
 

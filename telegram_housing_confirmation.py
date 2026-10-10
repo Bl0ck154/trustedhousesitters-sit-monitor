@@ -26,7 +26,7 @@ def prompt(aid,mid,token,chat_id,db_path,api_func=api):
         period=str(item.get("start") or "?")+"–"+str(item.get("end") or "?")
         body=("🏠 <b>Підтвердити власне проживання?</b>\n"
               +html.escape(place)+"\n📅 "+html.escape(period)
-              +"\n\nЛише якщо власник справді обрав тебе. Це перенесе пошук на незайняті дати.")
+              )
         markup={"inline_keyboard":[[
             {"text":"✅ Так, мене підтвердили","callback_data":f"t4:y:{aid}"},
             {"text":"Скасувати","callback_data":f"t4:n:{aid}"}
@@ -62,11 +62,11 @@ def reply(update,token,chat_id,api_func=api,db_path=controls.DB):
         with conn:
             conn.execute("DELETE FROM pending_confirmations WHERE prompt_message_id=?",(mid,))
         if flag=="n":
-            body="Скасовано. Дати не змінені."
+            body="Скасовано."
         else:
             try:
                 state.update(conn,aid,"confirmed",controls.DATA/"listings")
-                body="✅ <b>Проживання підтверджено вручну.</b>\n\n"+reporting.plan_text(conn)
+                body="✅ Проживання підтверджено."
             except ValueError as ex:
                 body="⚠️ "+html.escape(str(ex))
     api_func(token,"sendMessage",{"chat_id":str(chat_id),"text":body,"parse_mode":"HTML",

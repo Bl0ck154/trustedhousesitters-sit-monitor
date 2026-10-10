@@ -58,7 +58,6 @@ def options_text(conn,today_date=None):
                          " · "+esc(item.get("start"))+"–"+esc(item.get("end"))+
                          " · "+esc(pets)+esc(note)+" · ID: <code>"+esc(item.get("assignment_id"))+"</code>")
     if not rows:parts.append("Зараз у збереженій повній вибірці немає придатних варіантів.")
-    parts.append("<i>Запасні варіанти збираються завчасно. Наявність місця перевіряється перед сповіщенням.</i>")
     return "\n".join(parts)[:3950]
 
 def plan_text(conn,today_date=None):
@@ -82,9 +81,8 @@ def plan_text(conn,today_date=None):
     for a,b in journey["bridge_gaps"][:3]:
         parts.append("⚠️ Прогалина <b>"+str((b-a).days)+" ночей</b> ("+
                      esc(a.isoformat())+"–"+esc(b.isoformat())+
-                     ") — потрібен короткий місток або окреме житло.")
+                     ")")
     parts.append("🐕 Резерв із собаками: "+("активні сповіщення" if plan.urgent(stays,now) else "окремий список /options"))
-    parts.append("<i>Сайт може показувати Confirmed для іншого ситтера. Лише ти позначаєш власне підтвердження через /confirm або кнопку.</i>")
     return "\n".join(parts)[:3950]
 
 def applications_text(conn):
@@ -100,7 +98,6 @@ def applications_text(conn):
                      esc(item.get("start") or "?")+"–"+esc(item.get("end") or "?")+
                      "\n  "+state.LABELS.get(app["stage"],esc(app["stage"]))+" · ID: <code>"+esc(app["assignment_id"])+"</code>"+
                      " · стан оголошення: "+esc(site[0] if site else "невідомий"))
-    parts.append("\nКоманди: /talking ID · /confirm ID · /reject ID · /applied ID · /withdraw ID")
     return "\n".join(parts)[:3950]
 
 def daily_text(conn,today_date=None):
@@ -130,7 +127,4 @@ def daily_text(conn,today_date=None):
         label="🐕 резерв · " if plan.pet_tier(item)=="B" else ""
         lines.append("• "+label+_link(item)+" — "+esc(item.get("city"))+
                      ", "+esc(item.get("start")))
-    if plan.urgent(stays,now) and not stays:
-        lines.append("⚠️ Менше 10 днів до потрібного житла: розглядай резерв із собаками та тимчасову кімнату.")
-    lines.append("Деталі: /plan · /options · /applications")
     return "\n".join(lines)[:3950]

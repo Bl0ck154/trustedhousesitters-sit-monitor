@@ -40,16 +40,15 @@ def brief_caption(item):
           +"   📶 "+e(oldfmt.wifi_label(item)),
     ]
     if item.get("pet_tier")=="B":
-        row.insert(1,"🐕 <b>Запасний варіант із собаками</b>")
-    elif item.get("pet_tier")=="A" and not (item.get("pets") or {}).get("cat"):
-        row.insert(1,"🐹 <b>Невеликі домашні тварини</b>")
+        row.insert(1,"🐕 <b>Резерв</b>")
     left=oldfmt.time_label(item)
     if left:row.append("⏱ <b>Можна залишити:</b> "+e(left))
     flags=grade["flags"]
-    if flags:row.append("⚠️ <b>Зверни увагу:</b> "+e("; ".join(f["label"].split(" ",1)[-1] for f in flags[:3])))
+    if flags:row.append("⚠️ "+e("; ".join(f["label"].split(" ",1)[-1] for f in flags[:3])))
     info=oldfmt.brief(item.get("pet_care") or item.get("responsibilities"),155)
     if info:row.append("📝 <b>Догляд:</b> "+e(info))
-    if isinstance(item.get("application_count"),int):row.append("✉️ <b>Заявок:</b> "+str(item["application_count"]))
+    if isinstance(item.get("application_count"),int) and item["application_count"]>0:
+        row.append("✉️ <b>Заявок на сайті:</b> "+str(item["application_count"]))
     # If HTML length (including tags) exceeds limit, trim optional lines.
     while len("\n".join(row))>CAP_LIMIT and len(row)>5:
         # Duties then applicants are least important relative to title/status.

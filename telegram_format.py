@@ -99,7 +99,7 @@ def caption(item):
     if rating["flags"]:
         rows.append("⚠️ "+esc(" · ".join(f["label"] for f in rating["flags"][:2])))
     if isinstance(applicant,int) and applicant>0:
-        rows.append(f"📨 Публічний лічильник: {applicant} (не статус твоєї заявки)")
+        rows.append(f"📨 Заявок на сайті: {applicant}")
     msg="\n".join(rows)
     if len(html.unescape(msg))>MAX_CAPTION:
         rows=[row for row in rows if not row.startswith("🏠 ")]
@@ -137,7 +137,7 @@ def sections(item):
     if minutes:meta.append("⏱ Тварини можуть бути самі "+minutes)
     count=item.get("application_count")
     if isinstance(count,int) and count>0:
-        meta.append("📨 Публічний лічильник: "+str(count)+" (може відставати)")
+        meta.append("📨 Заявок на сайті: "+str(count))
     out=[("📋 Загальна інформація","\n".join(meta))]
     warnings=quality.priority(item)["flags"]
     if warnings:
@@ -227,4 +227,4 @@ def page_chunks(item,limit=MAX_PAGE):
     return pages or [header]
 
 def control_text(item):
-    return f"📖 <b>Деталі оголошення</b>\n{link(item)}\nНатисни кнопку, щоб переглянути весь опис без виходу з Telegram."
+    return f"📖 <b>Деталі оголошення</b>\n{link(item)}\n"

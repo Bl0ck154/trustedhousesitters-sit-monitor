@@ -83,26 +83,10 @@ def send_open(token, chat_id, item,applied=False,ignored=False):
     return response["message_id"],"text_card"
 
 def status_caption(item, newstate):
-    verb = {"reviewing":"⏸ Прийом заявок призупинено",
+    return {"reviewing":"⏸ Прийом заявок призупинено",
             "confirmed":"✅ Сіттера обрано",
-            "removed":"⛔️ Ці дати прибрано з оголошення",
-            "open":"🔔 Заявки знову відкриті — можна податися"}.get(newstate)
-    if not verb:
-        return None
-    lines=[verb,label(item),
-           f"📅 {html.escape(str(item.get('start') or '?'))} — {html.escape(str(item.get('end') or '?'))}"]
-    if newstate=="reviewing":
-        lines.append("⏸ Зараз нові заявки не приймаються. Якщо власник знову відкриє прийом, бот повідомить.")
-    if newstate=="open":
-        lines.append("⚡ Можна спробувати податися зараз — місця можуть швидко закінчитися.")
-    # THS public counters fluctuate between cached responses for the same
-    # assignment (including temporary zeros); they say nothing about the
-    # private outcome of this sitter's application.
-    if newstate=="reviewing":
-        lines.append("ℹ️ Reviewing не означає, що твою заявку відхилили. Перевір особистий статус у THS.")
-    elif newstate=="open":
-        lines.append("ℹ️ Повторне відкриття не означає, що попередні заявки відхилено або їх стало 0.")
-    return "\n".join(lines)
+            "removed":"⛔ Дати прибрано",
+            "open":"🔔 Заявки знову відкриті"}.get(newstate)
 
 def original_card_id(conn, assignment_id):
     """Stable original listing card, not the newest status notification.
@@ -125,7 +109,10 @@ def send_status(token, chat_id, item, state, reply_to_id=None):
     body = status_caption(item,state)
     if not body:
         raise ValueError("cannot notify unknown status")
-    args={"chat_id":chat_id,"text":body,
+    # A reply already quotes the original card. Standalone messages need
+    # the listing link, but not dates, counters or instructions.
+    args={"chat_id":chat_id,
+          "text":body if reply_to_id is not None else body+"\n"+label(item),
           "parse_mode":"HTML","disable_web_page_preview":"true"}
     if reply_to_id is not None:
         args["reply_to_message_id"]=str(reply_to_id)
@@ -139,6 +126,7 @@ def send_status(token, chat_id, item, state, reply_to_id=None):
         if reply_to_id is None or "Telegram HTTP 400" not in str(exc):
             raise
         args.pop("reply_to_message_id",None)
+        args["text"]=body+"\n"+label(item)
         result=api(token,"sendMessage",args)
     if not isinstance(result,dict) or not isinstance(result.get("message_id"),int):
         raise RuntimeError("Unexpected status message response")
@@ -356,7 +344,7 @@ def main():
         return 2
     if args.reset_keyboard:
         result=api(token,"sendMessage",{"chat_id":chat_id,
-                    "text":"⌨️ Стару клавіатуру прибрано. Керування — кнопками під оголошеннями та командами /plan, /options.",
+                    "text":"⌨️ Клавіатуру скинуто.",
                     "reply_markup":json.dumps({"remove_keyboard":True},ensure_ascii=False)})
         if not isinstance(result,dict) or not isinstance(result.get("message_id"),int):
             raise RuntimeError("Keyboard reset not acknowledged")

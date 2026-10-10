@@ -48,8 +48,7 @@ def handle_message(update,token,chat_id,api_func=api,db_path=DB):
                   "/reject ID — відмова\n"
                   "/applied ID — подана заявка\n"
                   "/withdraw ID — відкликана заявка\n"
-                  "Під оголошенням є кнопка підтвердження з додатковим запитанням.\n"
-                  "Статуси змінюються тільки вручну, не за публічним статусом THS.")
+                  "Статуси заявок — вручну.")
         else:
             stage={"/confirm":"confirmed","/reject":"rejected",
                    "/talking":"talking","/applied":"applied",
@@ -66,8 +65,6 @@ def handle_message(update,token,chat_id,api_func=api,db_path=DB):
                 try:
                     new=housing.update(cx,aid,stage,controls.DATA/"listings")
                     body="✅ "+html.escape(str(aid))+": "+housing.LABELS[new]
-                    if stage=="confirmed":body+="\n\n"+report.plan_text(cx)
-                    elif stage in ("rejected","withdrawn"):body+="\n\n"+report.plan_text(cx)
                 except ValueError as exc:
                     body="⚠️ "+html.escape(str(exc))
     api_func(token,"sendMessage",{"chat_id":str(chat_id),"text":body,

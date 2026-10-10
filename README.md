@@ -126,6 +126,10 @@ The listing's primary `photos` array can include images also present under `pets
 
 THS public pages can disagree across requests, even seconds apart. One observed assignment in The Hague alternated between Open with 2 or 4 applications and Reviewing with 5 applications. A public counter is not the personal application's status and should never be interpreted as a rejection.
 
-The status watcher now holds each new state as **unconfirmed** until it is observed again at least 65 seconds later. Seeing the prior state in between cancels the candidate. Contradictory flags in the same page are treated as `unknown`, not Open. Messages about Reviewing or reopening omit the unstable numerical applicant count; they explain explicitly that Reviewing does not mean a personal rejection. Newly announced listing cards label a nonzero application count as public and potentially stale.
+The status watcher now holds each new state as **unconfirmed** until it is observed again at least 65 seconds later. Seeing the prior state in between cancels the candidate. Contradictory flags in the same page are treated as `unknown`, not Open. Messages about Reviewing or reopening omit the unstable numerical applicant count; they contain only a one-line status; replies already quote the original listing card. Newly announced listing cards label a nonzero application count as public and potentially stale.
 
 The pending status is stored in `watch_transitions` within the local SQLite database; a failed Telegram send retains the tentative change for later retry. Tests include alternating Open/Reviewing snapshots with counts 0/2/4/5 from the same assignment.
+
+## Concise Telegram copy
+
+Status replies have one line only: “⏸ Прийом заявок призупинено”, “🔔 Заявки знову відкриті”, “✅ Сіттера обрано” or “⛔ Дати прибрано”. The original photo card is quoted automatically. Standalone fallback notices additionally link the listing. No guidance, duplicate explanations or unstable applicant counters appear in status updates. Application actions, confirmation and daily reports also avoid unsolicited advice. Listing facts, dates, pet care and owner descriptions remain intact.
