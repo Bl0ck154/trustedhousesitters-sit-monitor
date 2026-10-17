@@ -65,3 +65,25 @@ No automatic GitHub Actions deployment or Workers Builds: avoid unplanned GitHub
 ### Production rollback
 
 Disable Workers Cron and send gates first, restore Telegram to polling via \`deleteWebhook\` (do not drop pending updates), restore old Netcup bot, check owner-only status, and reconcile any messages marked \`uncertain\` before resending anything. D1 remains a backup; do not delete the SQLite snapshot.
+
+## Emergency Netcup-free start (2026-10-17)
+
+Second EU D1 database and independent production-target Worker 'ths-sit-monitor-live' have been created.
+
+Current flags: SCAN_ENABLED=true, SCAN_PROFILE=quick, LIVE_MODE=false and WEBHOOK_ENABLED=false. One search-results page is scheduled every 2 minutes; the full search is NOT running (Free-tier CPU needs verification first). Initial earliest start is 2026-11-14; past private confirmations and applications are not yet migrated.
+
+### Secure Telegram activation
+
+1. Open https://dash.cloudflare.com > Bl0ck account > Workers & Pages > ths-sit-monitor-live > Settings > Variables and Secrets.
+2. In @BotFather regenerate the existing TrustedHousesitters bot's token. This revokes the Netcup token so an unexpectedly recovered server cannot send duplicate messages.
+3. Save the replacement value as a SECRET named TELEGRAM_BOT_TOKEN. Do not commit or paste the token publicly.
+4. Save the owner's numeric private Telegram user ID as TELEGRAM_CHAT_ID. Use @userinfobot to retrieve the personal user ID; not the bot's username/ID.
+5. Verify both bindings, then explicitly set LIVE_MODE=true and WEBHOOK_ENABLED=true while retaining SCAN_ENABLED=true.
+6. The next cron run calls Telegram setWebhook automatically at PUBLIC_WORKER_URL + /telegram/webhook, with drop_pending_updates=false, max_connections=1 and an HMAC-like deterministic token-derived webhook secret header (SHA-256; original bot token is never placed in URL).
+7. Use /start and /plan with the existing bot and check Workers logs, D1 settings and getWebhookInfo. Full scans, historical applications and legacy Telegram cards still need migration/testing before treating functionality as equivalent.
+
+### Explicit limitations
+- Quick-only mode observes ONLY first sorted page; listings on pages 2-90 can be missed.
+- Existing SQLite manual statuses, old card identifiers and ignores are absent until Netcup history is imported.
+- Staging remains separate and disabled. Cron propagation takes up to 15 minutes.
+- Do not add API secrets to source, logs, tickets, or GitHub.
