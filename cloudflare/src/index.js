@@ -118,7 +118,11 @@ async function detail(env,candidate,context){
   for(const section of ["publishedAssignment","openAssignments","upcomingAssignments","pastAssignments"]){
     for(const row of listing[section]||[]){if(String(row.id)===String(candidate.assignment_id))same.push({section,row});}
   }
-  if(!same.length){return {...candidate,status:"removed",verified_by_detail:true,eligible_alert:false};}
+  if(!same.length){
+    const pathname=state.router?.location?.pathname||"";
+    if(!pathname.endsWith("/l/"+candidate.listing_id+"/"))throw new Error("Assignment absent from noncanonical listing page");
+    return {...candidate,status:"removed",verified_by_detail:true,eligible_alert:false};
+  }
   const flags=new Set(same.map(({row})=>String(!!row.isConfirmed)+":"+String(!!row.isReviewing)));
   const applies=new Set(same.map(x=>x.row.canApply).filter(x=>typeof x==="boolean"));
   const chosen=same[0];
@@ -195,10 +199,10 @@ async function scanFull(env,c){
   let progress=JSON.parse(await settings(env.DB,"full_progress")||"null");
   if(!progress||progress.cycle!==cycle)progress={cycle,page:1,reviewing:false,done:false};
   if(progress.done)return;
-  for(let k=0;k<5;k++){
+  for(let k=0;k<7;k++){
     const d=await doPage(env,progress.page,progress.reviewing,c);
     progress.page++;
-    if(!d.count||progress.page>55||((progress.page-1)*12>=d.total)){
+    if(!d.count||progress.page>90||((progress.page-1)*12>=d.total)){
       if(progress.reviewing){progress.done=true;break;}
       progress.reviewing=true;progress.page=1;
     }
@@ -473,12 +477,13 @@ async function scheduler(env,controller){
    try{await scanFull(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("full scan failed",e.name);}
    if(minute%2===0){try{await statusWatch(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("status failed",e.name);}}
    try{await deliver(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("delivery failed",e.name);}
-   if(vilniusMinute()===8*60+30){
+   if(vilniusMinute()>=8*60+30&&vilniusMinute()<9*60){
      const mark=await env.DB.prepare("INSERT OR IGNORE INTO daily_reports(local_day,state) VALUES(?,'sending')").bind(c.today).run();
      if(mark.meta.changes){try{await tg(env,"sendMessage",{chat_id:env.TELEGRAM_CHAT_ID,text:await reportText(env,"report",c),parse_mode:"HTML"});await env.DB.prepare("UPDATE daily_reports SET state='sent' WHERE local_day=?").bind(c.today).run();}catch(e){await env.DB.prepare("UPDATE daily_reports SET state='uncertain' WHERE local_day=?").bind(c.today).run();}}
    }
  }finally{await release(env,"cron");}
 }
+export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,fingerprint,searchRows,buttons,caption,vilniusDay};
 export default {
  async fetch(request,env){
    const url=new URL(request.url);
