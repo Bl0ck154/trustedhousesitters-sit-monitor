@@ -73,6 +73,13 @@ def main():
     p.add_argument("--output",type=pathlib.Path,required=True,help="PRIVATE output SQL file outside repository")
     p.add_argument("--earliest-start",default=None)
     args=p.parse_args()
+    if not args.earliest_start:
+        private_config=args.data/"config.env"
+        if private_config.is_file():
+            for line in private_config.read_text(encoding="utf8").splitlines():
+                if line.startswith("THS_EARLIEST_START="):
+                    args.earliest_start=line.split("=",1)[1].strip().strip('"').strip("'")
+                    break
     if args.earliest_start:dt.date.fromisoformat(args.earliest_start)
     data=args.data.resolve();out=args.output.resolve()
     if not data.is_dir():p.error("data backup directory does not exist")
