@@ -271,11 +271,14 @@ async function deliver(env,c){
 }
 async function sendStatus(env,item,state,mid){
  const words={reviewing:"⏸ Прийом заявок призупинено",open:"🔔 Заявки знову відкриті",confirmed:"✅ Сіттера обрано",removed:"⛔ Дати прибрано"};
- const suffix=mid?"":("\n"+esc(item.city)+", "+esc(item.country)+" · "+esc(item.start)+"–"+esc(item.end)+"\n"+'<a href="'+esc(item.url)+'">Оголошення</a>');
- const payload={chat_id:env.TELEGRAM_CHAT_ID,text:words[state]+suffix,parse_mode:"HTML"};
+ const lines=[words[state],'<a href="'+esc(item.url)+'"><b>'+esc(item.title||"Оголошення")+'</b></a>'];
+ if(item.city||item.country)lines.push("📍 "+esc([item.city,item.country].filter(Boolean).join(", ")));
+ if(item.start&&item.end)lines.push("📅 "+esc(item.start)+" — "+esc(item.end));
+ if(state==="open"||state==="reviewing")lines.push("📨 Заявок на сайті: "+(Number.isInteger(item.application_count)&&item.application_count>=0?item.application_count:"—"));
+ const payload={chat_id:env.TELEGRAM_CHAT_ID,text:lines.join("\n"),parse_mode:"HTML"};
  if(mid)payload.reply_parameters={message_id:mid,allow_sending_without_reply:true};
  try{return (await tg(env,"sendMessage",payload)).message_id;}
- catch(e){if(!mid||!String(e).includes("Telegram HTTP 400"))throw e;delete payload.reply_parameters;payload.text=words[state]+"\n"+'<a href="'+esc(item.url)+'">Оголошення</a>';return (await tg(env,"sendMessage",payload)).message_id;}
+ catch(e){if(!mid||!String(e).includes("Telegram HTTP 400"))throw e;delete payload.reply_parameters;return (await tg(env,"sendMessage",payload)).message_id;}
 }
 async function statusWatch(env,c){
  const rows=(await env.DB.prepare("SELECT * FROM watch WHERE last_checked IS NULL OR last_checked<? ORDER BY COALESCE(last_checked,'') LIMIT 8").bind(new Date(now()-120e3).toISOString()).all()).results;
