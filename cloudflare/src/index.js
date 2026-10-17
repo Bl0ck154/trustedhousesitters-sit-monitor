@@ -597,7 +597,61 @@ async function scheduler(env,controller){
    }
  }finally{await release(env,"cron");}
 }
-export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,priority,fingerprint,searchRows,buttons,caption,vilniusDay};
+
+function mailboxDomain(value){
+ const m=String(value||"").toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/);
+ return m?.[1]||"";
+}
+function notificationSource(from,headerFrom){
+ const a=mailboxDomain(from),b=mailboxDomain(headerFrom);
+ // User-supplied Sittify alerts only; forwarder can rewrite the envelope FROM.
+ if(b==="sittify.com"||b.endsWith(".sittify.com"))return "sittify";
+ if(a==="sittify.com"||a.endsWith(".sittify.com"))return "sittify";
+ return null;
+}
+function alertLinks(raw){
+ let text=String(raw||"");
+ text=text.replace(/=\r?\n/g,"");
+ // Read links appearing directly in text or html; never fetch or follow them.
+ const found=[];
+ for(const m of text.matchAll(/https?:\/\/[a-z0-9][^\s<>"'\\]{0,600}/gi)){
+   const str=m[0].replace(/&amp;/g,"&").replace(/[).,;]+$/g,"");
+   try{
+     const u=new URL(str);
+     const host=u.hostname.toLowerCase();
+     if(u.protocol==="https:"&&(host==="sittify.com"||host.endsWith(".sittify.com")||host==="trustedhousesitters.com"||host.endsWith(".trustedhousesitters.com"))&&!found.includes(u.href)){
+       found.push(u.href);
+       if(found.length===3)break;
+     }
+   }catch{}
+ }
+ return found;
+}
+async function inboundEmail(message,env){
+ if(env.EMAIL_ALERTS_ENABLED!=="true"||env.LIVE_MODE!=="true")return;
+ if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.DB)throw new Error("Inbound mail relay not configured");
+ const source=notificationSource(message.from,message.headers.get("from"));
+ if(!source)return; // Silently ignore all unrelated inbox mail.
+ if(Number(message.rawSize||0)>200000)return; // No attachments/full private email archives.
+ const subject=String(message.headers.get("subject")||"New sit alert").replace(/[\r\n<>]/g," ").slice(0,170);
+ const mid=String(message.headers.get("message-id")||"").trim();
+ const raw=(await new Response(message.raw).text()).slice(0,200000);
+ const signature=[mid||"",message.from||"",message.headers.get("date")||"",subject,raw.slice(0,800)].join("|");
+ const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(signature))),b=>b.toString(16).padStart(2,"0")).join("");
+ const record=await env.DB.prepare("INSERT OR IGNORE INTO inbound_alerts(message_key,source,subject,state,received_at) VALUES(?,?,?,'pending',?)").bind(hash,source,subject,iso()).run();
+ if(!record.meta.changes)return; // Dedup across email retries.
+ const urls=alertLinks(raw);
+ const text="🏠 <b>Нове сповіщення Sittify</b>\n"+esc(subject)+"\n"+(urls.length?"🔗 "+urls.map(esc).join("\n"):"Перевір свій збережений пошук у Sittify.")+"\n\n<i>Джерело: email Sittify · оголошення THS напряму не скануються.</i>";
+ try{
+   await tg(env,"sendMessage",{chat_id:env.TELEGRAM_CHAT_ID,text:text.slice(0,3950),parse_mode:"HTML",disable_web_page_preview:true});
+   await env.DB.prepare("UPDATE inbound_alerts SET state='sent',sent_at=? WHERE message_key=?").bind(iso(),hash).run();
+ }catch(e){
+   await env.DB.prepare("UPDATE inbound_alerts SET state='failed' WHERE message_key=?").bind(hash).run();
+   throw e;
+ }
+}
+
+export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,priority,fingerprint,searchRows,buttons,caption,vilniusDay,mailboxDomain,notificationSource,alertLinks};
 export default {
  async fetch(request,env){
    const url=new URL(request.url);
@@ -609,5 +663,6 @@ export default {
    let body;try{body=await request.json();}catch{return new Response("Bad JSON",{status:400});}
    try{await telegramUpdate(env,body);return new Response("OK");}catch(e){console.warn("webhook failure",e.name);return new Response("Handler failed",{status:503});}
  },
- async scheduled(controller,env,ctx){ctx.waitUntil(scheduler(env,controller));}
+ async scheduled(controller,env,ctx){ctx.waitUntil(scheduler(env,controller));},
+ async email(message,env,ctx){ctx.waitUntil(inboundEmail(message,env));}
 };
