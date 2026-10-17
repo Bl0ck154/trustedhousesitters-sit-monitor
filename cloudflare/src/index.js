@@ -551,12 +551,33 @@ async function acquire(env,key,seconds){
  return !!r.meta.changes;
 }
 async function release(env,key){await env.DB.prepare("UPDATE leases SET expires_at=0 WHERE name=?").bind(key).run();}
+async function ensureTelegramWebhook(env){
+  if(env.LIVE_MODE!=="true"||env.WEBHOOK_ENABLED!=="true")return false;
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.PUBLIC_WORKER_URL){
+    await putSetting(env.DB,"webhook_setup_status","awaiting_token_chat_or_url");
+    return false;
+  }
+  if(await settings(env.DB,"webhook_installed_at"))return true;
+  const u=new URL(env.PUBLIC_WORKER_URL);
+  if(u.protocol!=="https:"||u.hostname!=="ths-sit-monitor-live.bl0ck-c1b.workers.dev")throw new Error("Invalid canonical Worker host");
+  await tg(env,"setWebhook",{url:u.origin+"/telegram/webhook",secret_token:await webhookSecret(env),allowed_updates:["message","callback_query"],max_connections:1,drop_pending_updates:false});
+  await putSetting(env.DB,"webhook_installed_at",iso());
+  await putSetting(env.DB,"webhook_setup_status","installed");
+  return true;
+}
 async function scheduler(env,controller){
- if(env.SCAN_ENABLED!=="true")return;
+ if(!env.DB)return;
+ const wantsWebhook=env.LIVE_MODE==="true"&&env.WEBHOOK_ENABLED==="true";
+ if(env.SCAN_ENABLED!=="true"&&!wantsWebhook)return;
  const minute=Math.floor(now()/60000);
  if(!(await acquire(env,"cron",55)))return;
- await putSetting(env.DB,"last_cron_tick",iso());
  try{
+   await putSetting(env.DB,"last_cron_tick",iso());
+   if(wantsWebhook){
+     try{await ensureTelegramWebhook(env);}
+     catch(e){await putSetting(env.DB,"webhook_setup_status","error:"+String(e.name||"Error")+":"+String(e.message||"").slice(0,120));console.warn("Telegram webhook setup failed",e.name);}
+   }
+   if(env.SCAN_ENABLED!=="true")return; // Telegram-only mode: never contact blocked THS.
    const c=await ctx(env);
    if(minute%2===0){
      try{await scanQuick(env,c);await putSetting(env.DB,"last_quick_success",iso());}
@@ -566,18 +587,7 @@ async function scheduler(env,controller){
      try{await scanFull(env,c);await putSetting(env.DB,"last_full_step",iso());}
      catch(e){await putSetting(env.DB,"last_full_error",String(e.name||"Error"));if(e instanceof Restricted)return;console.warn("full scan failed",e.name);}
    }
-   if(env.LIVE_MODE!=="true")return; // Discovery-only phase: never emit Telegram messages.
-   if(env.WEBHOOK_ENABLED==="true"){
-     if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.PUBLIC_WORKER_URL){
-       console.warn("Activation blocked: missing Telegram secret, owner chat, or canonical URL");return;
-     }
-     if(!(await settings(env.DB,"webhook_installed_at"))){
-       const u=new URL(env.PUBLIC_WORKER_URL);
-       if(u.protocol!=="https:"||!u.hostname.endsWith(".workers.dev"))throw new Error("Invalid worker URL");
-       await tg(env,"setWebhook",{url:u.origin+"/telegram/webhook",secret_token:await webhookSecret(env),allowed_updates:["message","callback_query"],max_connections:1,drop_pending_updates:false});
-       await putSetting(env.DB,"webhook_installed_at",iso());
-     }
-   }
+   if(env.LIVE_MODE!=="true"||env.WEBHOOK_ENABLED!=="true"||!(await settings(env.DB,"webhook_installed_at")))return;
    if(minute%2===0){try{await statusWatch(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("status failed",e.name);}}
    try{await deliver(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("delivery failed",e.name);}
    if(vilniusMinute()>=8*60+30&&vilniusMinute()<9*60){
@@ -590,7 +600,7 @@ export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,prior
 export default {
  async fetch(request,env){
    const url=new URL(request.url);
-   if(url.pathname==="/health"&&request.method==="GET")return Response.json({service:"ths-cloudflare-staging",stage:env.LIVE_MODE!=="true",ready:!!env.DB,send_enabled:env.LIVE_MODE==="true",scan_enabled:env.SCAN_ENABLED==="true"});
+   if(url.pathname==="/health"&&request.method==="GET")return Response.json({service:"ths-cloudflare-live",stage:env.LIVE_MODE!=="true",ready:!!env.DB,telegram_configured:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),send_enabled:env.LIVE_MODE==="true"&&!!env.TELEGRAM_CHAT_ID,webhook_enabled:env.WEBHOOK_ENABLED==="true",scan_enabled:env.SCAN_ENABLED==="true"});
    if(url.pathname!=="/telegram/webhook"||request.method!=="POST")return new Response("Not found",{status:404});
    if(env.LIVE_MODE!=="true"||env.WEBHOOK_ENABLED!=="true")return new Response("Webhook disabled on staging",{status:409});
    if(!env.TELEGRAM_BOT_TOKEN||request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==await webhookSecret(env))return new Response("Forbidden",{status:403});
