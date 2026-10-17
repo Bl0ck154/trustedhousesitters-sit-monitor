@@ -7,7 +7,7 @@ workers_dev = true
 LIVE_MODE = "false"
 SCAN_ENABLED = "false"
 WEBHOOK_ENABLED = "false"
-THS_EARLIEST_START = "2026-11-01"
+THS_EARLIEST_START = ""
 [[d1_databases]]
 binding = "DB"
 database_name = "ths-sit-monitor"
@@ -20,7 +20,7 @@ workers_dev = true
 LIVE_MODE = "false"
 SCAN_ENABLED = "false"
 WEBHOOK_ENABLED = "false"
-THS_EARLIEST_START = "2026-11-01"
+THS_EARLIEST_START = ""
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "ths-sit-monitor-staging"
