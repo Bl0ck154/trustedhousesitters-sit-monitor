@@ -259,6 +259,15 @@ function caption(item){
  (Number.isInteger(item.application_count)&&item.application_count>0?"📝 Публічних заявок (може бути застаріло): "+item.application_count+"\n":"")+
  '<a href="'+esc(item.url)+'">Відкрити оголошення</a>').slice(0,1000);
 }
+async function webhookSecret(env){
+ if(env.TELEGRAM_WEBHOOK_SECRET)return env.TELEGRAM_WEBHOOK_SECRET;
+ if(!env.TELEGRAM_BOT_TOKEN)throw new Error("Missing bot token");
+ // A deterministic webhook-only secret derived from the bot credential.
+ // The raw Telegram token is never exposed in webhook URLs or source control.
+ const data=new TextEncoder().encode("trustedhousesitters:webhook:v1:"+env.TELEGRAM_BOT_TOKEN);
+ const digest=await crypto.subtle.digest("SHA-256",data);
+ return Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,"0")).join("");
+}
 async function tg(env,method,payload){
  if(env.LIVE_MODE!=="true"||!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID)throw new Error("Telegram disabled");
  const r=await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/"+method,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:AbortSignal.timeout(12000)});
@@ -522,6 +531,7 @@ async function scheduler(env,controller){
  if(env.SCAN_ENABLED!=="true")return;
  const minute=Math.floor(now()/60000);
  if(!(await acquire(env,"cron",55)))return;
+ await putSetting(env.DB,"last_cron_tick",iso());
  try{
    const c=await ctx(env);
    if(minute%2===0){
@@ -534,13 +544,13 @@ async function scheduler(env,controller){
    }
    if(env.LIVE_MODE!=="true")return; // Discovery-only phase: never emit Telegram messages.
    if(env.WEBHOOK_ENABLED==="true"){
-     if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.TELEGRAM_WEBHOOK_SECRET||!env.PUBLIC_WORKER_URL){
+     if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.PUBLIC_WORKER_URL){
        console.warn("Activation blocked: missing Telegram secret, owner chat, or canonical URL");return;
      }
      if(!(await settings(env.DB,"webhook_installed_at"))){
        const u=new URL(env.PUBLIC_WORKER_URL);
        if(u.protocol!=="https:"||!u.hostname.endsWith(".workers.dev"))throw new Error("Invalid worker URL");
-       await tg(env,"setWebhook",{url:u.origin+"/telegram/webhook",secret_token:env.TELEGRAM_WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:1,drop_pending_updates:false});
+       await tg(env,"setWebhook",{url:u.origin+"/telegram/webhook",secret_token:await webhookSecret(env),allowed_updates:["message","callback_query"],max_connections:1,drop_pending_updates:false});
        await putSetting(env.DB,"webhook_installed_at",iso());
      }
    }
@@ -559,7 +569,7 @@ export default {
    if(url.pathname==="/health"&&request.method==="GET")return Response.json({service:"ths-cloudflare-staging",stage:env.LIVE_MODE!=="true",ready:!!env.DB,send_enabled:env.LIVE_MODE==="true",scan_enabled:env.SCAN_ENABLED==="true"});
    if(url.pathname!=="/telegram/webhook"||request.method!=="POST")return new Response("Not found",{status:404});
    if(env.LIVE_MODE!=="true"||env.WEBHOOK_ENABLED!=="true")return new Response("Webhook disabled on staging",{status:409});
-   if(!env.TELEGRAM_WEBHOOK_SECRET||request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==env.TELEGRAM_WEBHOOK_SECRET)return new Response("Forbidden",{status:403});
+   if(!env.TELEGRAM_BOT_TOKEN||request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==await webhookSecret(env))return new Response("Forbidden",{status:403});
    if(!env.DB||!env.TELEGRAM_CHAT_ID||!env.TELEGRAM_BOT_TOKEN)return new Response("Unconfigured",{status:503});
    let body;try{body=await request.json();}catch{return new Response("Bad JSON",{status:400});}
    try{await telegramUpdate(env,body);return new Response("OK");}catch(e){console.warn("webhook failure",e.name);return new Response("Handler failed",{status:503});}
