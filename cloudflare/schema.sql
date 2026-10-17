@@ -19,3 +19,7 @@ CREATE TABLE IF NOT EXISTS telegram_updates(update_id INTEGER PRIMARY KEY,receiv
 CREATE TABLE IF NOT EXISTS daily_reports(local_day TEXT PRIMARY KEY,state TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS button_sends(assignment_id TEXT NOT NULL,message_id INTEGER NOT NULL,action TEXT NOT NULL,sent_at REAL NOT NULL,state TEXT NOT NULL,sent_messages INTEGER DEFAULT 0,PRIMARY KEY(assignment_id,message_id,action));
 CREATE TABLE IF NOT EXISTS keyboard_updates(assignment_id TEXT NOT NULL,message_id INTEGER NOT NULL,requested_at TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(assignment_id,message_id));
+
+-- Optional inbound mail relay for user-configured Sittify notification emails.
+CREATE TABLE IF NOT EXISTS inbound_alerts(message_key TEXT PRIMARY KEY,source TEXT NOT NULL,subject TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',received_at TEXT NOT NULL,sent_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_inbound_alerts_state ON inbound_alerts(state,received_at);
