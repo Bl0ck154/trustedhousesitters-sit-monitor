@@ -68,7 +68,7 @@ async function accessFetch(env,url){
   if(now()<until)throw new Restricted("Cooldown active");
   let res;
   try{res=await fetch(u.toString(),{redirect:"error",signal:AbortSignal.timeout(12000),headers:{"Accept":"text/html,application/xhtml+xml"}});}
-  catch(e){throw new Error("THS transport failure: "+e.name);}
+  catch(e){throw new Error("THS transport failure: "+e.name+": "+String(e.message||"").slice(0,180));}
   if(res.status===403||res.status===429){await putSetting(env.DB,"access_until",now()+(res.status===429?3600e3:21600e3));throw new Restricted("THS "+res.status);}
   if(!res.ok)throw new Error("THS "+res.status);
   const html=await res.text();
