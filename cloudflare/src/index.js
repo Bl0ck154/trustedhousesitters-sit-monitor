@@ -533,6 +533,17 @@ async function scheduler(env,controller){
      catch(e){await putSetting(env.DB,"last_full_error",String(e.name||"Error"));if(e instanceof Restricted)return;console.warn("full scan failed",e.name);}
    }
    if(env.LIVE_MODE!=="true")return; // Discovery-only phase: never emit Telegram messages.
+   if(env.WEBHOOK_ENABLED==="true"){
+     if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.TELEGRAM_WEBHOOK_SECRET||!env.PUBLIC_WORKER_URL){
+       console.warn("Activation blocked: missing Telegram secret, owner chat, or canonical URL");return;
+     }
+     if(!(await settings(env.DB,"webhook_installed_at"))){
+       const u=new URL(env.PUBLIC_WORKER_URL);
+       if(u.protocol!=="https:"||!u.hostname.endsWith(".workers.dev"))throw new Error("Invalid worker URL");
+       await tg(env,"setWebhook",{url:u.origin+"/telegram/webhook",secret_token:env.TELEGRAM_WEBHOOK_SECRET,allowed_updates:["message","callback_query"],max_connections:1,drop_pending_updates:false});
+       await putSetting(env.DB,"webhook_installed_at",iso());
+     }
+   }
    if(minute%2===0){try{await statusWatch(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("status failed",e.name);}}
    try{await deliver(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("delivery failed",e.name);}
    if(vilniusMinute()>=8*60+30&&vilniusMinute()<9*60){
