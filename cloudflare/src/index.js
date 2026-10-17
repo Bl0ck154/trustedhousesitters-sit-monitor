@@ -135,6 +135,29 @@ async function detail(env,candidate,context){
   out.eligible_alert=shouldAlert(out,context.stays,context.start,context.today);
   out.observed_at=iso();return out;
 }
+function priority(item,stays,start,today){
+  const tier=petTier(item);
+  let score={A:100,B:55,C:0}[tier];
+  if(tier==="A"&&Number(item.pets?.cat)>0)score+=12;
+  const focus=journey(stays,start,today).focus;
+  if(focus&&item.start)score+=Math.max(0,30-Math.abs(diff(focus[0],item.start))*3);
+  if(item.transport_accessible)score+=12;
+  if(item.internet==="highSpeed")score+=10;
+  else if(item.internet==="basic")score+=6;
+  if(Number(item.minutes_pet_can_be_left_alone)>=360)score+=8;
+  if(item.transit_warning)score-=50;
+  if(["Spain","Portugal","France","Germany","Austria"].includes(item.country))score+=4;
+  if(stays.length){
+    const last=[...stays].sort((a,b)=>b.end.localeCompare(a.end))[0];
+    if(item.country===last.country)score+=12;
+    else if(({"Germany":["Austria","France","Netherlands","Belgium","Poland","Denmark","Czech Republic","Switzerland"],"Austria":["Germany","Switzerland","Italy","Slovenia","Czech Republic","Hungary"],"France":["Germany","Switzerland","Belgium","Italy","Spain","Luxembourg"],"Spain":["France","Portugal"],"Portugal":["Spain"]}[last.country]||[]).includes(item.country))score+=5;
+  }
+  const description=[item.responsibilities,item.pet_care,item.introduction].join(" ").toLowerCase();
+  if(["must have a car","car required","own car essential","no public transport"].some(x=>description.includes(x)))score-=90;
+  if(["medication","insulin","injections","reactive dog","pulls hard","giant dog"].some(x=>description.includes(x)))score-=24;
+  if(tier==="B"&&Number(item.pets?.dog)===2)score-=10;
+  return score;
+}
 function validRow(i,row,c){
   const country=i.location?.countryName;const n=diff(row.startDate,row.endDate);
   return ALLOWED.has(country)&&Number.isFinite(n)&&n>=7&&n<=50&&row.startDate>=c.window[0]&&row.startDate<=c.window[1];
@@ -180,7 +203,7 @@ async function seenCandidate(env,item,c){
 async function doPage(env,page,reviewing,c){
   const state=await accessFetch(env,searchURL(page,reviewing,c)),data=searchRows(state,c);
   let details=0;
-  for(const item of data.rows){
+  for(const item of data.rows.sort((a,b)=>(a.status!=="open")-(b.status!=="open")||priority(b,c.stays,c.start,c.today)-priority(a,c.stays,c.start,c.today))){
     if(item.status==="open"&&suitable(item,c.stays,c.start,c.today)&&details<2){
       try{await seenCandidate(env,item,c);details++;}catch(e){if(e instanceof Restricted)throw e;}
     }else{
@@ -334,7 +357,7 @@ async function recentCandidates(env,c){
  const rows=(await env.DB.prepare("SELECT payload FROM records ORDER BY updated_at DESC LIMIT 200").all()).results;
  const ignored=new Set((await env.DB.prepare("SELECT assignment_id FROM ignored_assignments").all()).results.map(x=>x.assignment_id));
  const items=rows.map(r=>{try{return JSON.parse(r.payload);}catch{return null;}}).filter(x=>x&&!ignored.has(x.assignment_id)&&suitable(x,c.stays,c.start,c.today));
- return items.sort((a,b)=>Number(petTier(a)==="B")-Number(petTier(b)==="B")||(a.start||"").localeCompare(b.start||""));
+ return items.sort((a,b)=>Number(petTier(a)==="B")-Number(petTier(b)==="B")||priority(b,c.stays,c.start,c.today)-priority(a,c.stays,c.start,c.today));
 }
 async function reportText(env,kind,c){
  const apps=(await env.DB.prepare("SELECT * FROM applications ORDER BY applied_at DESC LIMIT 40").all()).results;
@@ -509,7 +532,7 @@ async function scheduler(env,controller){
    }
  }finally{await release(env,"cron");}
 }
-export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,fingerprint,searchRows,buttons,caption,vilniusDay};
+export const __test={petTier,journey,windowFor,suitable,urgent,shouldAlert,priority,fingerprint,searchRows,buttons,caption,vilniusDay};
 export default {
  async fetch(request,env){
    const url=new URL(request.url);
