@@ -14,7 +14,7 @@ The existing Python runtime remains unchanged. This port is **not** a production
 ## Architecture
 
 - ES module Worker with D1 persistence and a minute-based scheduler.
-- Quick search every 2 minutes (3 pages sorted newest), rolling full search across the next 30-minute cycle (up to 55 pages per Open/Reviewing stream, five pages per minute). Full-search *completion is not currently guaranteed on a Free account under large result volumes*.
+- Quick search every 2 minutes (3 pages sorted newest), rolling full search across the next 30-minute cycle (up to 90 pages per Open/Reviewing stream, seven pages per minute). Full-search *completion is not currently guaranteed on a Free account under large result volumes*.
 - Status lifecycle check every 2 minutes. Reviewing/hot items at 2-minute frequency, other items at 4 minutes. Two observations separated by 65+ seconds (reopenings require an extra verification). Failed access is unknown, never a removal.
 - Public HTML structured data via HTTPS; 429 -> 1h shared cooldown, 403/challenge -> 6h. **No bypass, proxy fallback or browser fallback**.
 - D1 snapshots, applications, confirmed stays, ignored listings, status transitions, delivery state and deduplication.
@@ -24,7 +24,7 @@ The existing Python runtime remains unchanged. This port is **not** a production
 ## Important differences / incomplete parity
 
 1. Original Python has richer formatting, legacy t2 cards and controls tables, photo upload optimization and queued retry of keyboard redraws. These are **not fully ported**; do not switch production until tested.
-2. Cloudflare Free has 10ms CPU and 50 subrequests per invocation. Search HTML parsing and D1 writes per candidate can hit either limit. The port is NOT yet proven capable of delivering exhaustive 55-page full scans under these limits. No automatic omission of these constraints is acceptable.
+2. Cloudflare Free has 10ms CPU and 50 subrequests per invocation. Search HTML parsing and D1 writes per candidate can hit either limit. The port is NOT yet proven capable of delivering exhaustive 90-page full scans under these limits. No automatic omission of these constraints is acceptable.
 3. Workers can reach only public unauthenticated pages. No private THS login, application status sync or bypass of access blocks exists. Source site's robots and ToS still apply.
 4. Staging health passing does not prove search, Telegram albums, status transitions or full-scan parity.
 5. Browser fallback and local proxy broker are deliberately absent (Workers has neither); their absence affects recovery from network failures, never permits bypass of HTTP 403/429.
@@ -46,7 +46,7 @@ Schema bootstrapping after creating an *empty staging D1*:
 \`\`\`sh
 npx wrangler d1 create ths-sit-monitor-staging
 # Set new ID in env.staging.d1_databases in wrangler.toml
-npx wrangler d1 execute ths-sit-monitor-staging --remote --file schema.sql
+npx wrangler d1 execute ths-sit-monitor-staging --env staging --remote --file schema.sql
 npx wrangler deploy --env staging
 curl https://<actual-workers-subdomain>/health
 \`\`\`
@@ -55,7 +55,7 @@ No automatic GitHub Actions deployment or Workers Builds: avoid unplanned GitHub
 
 ## Read-only Netcup snapshot migration (no SSH from staging)
 
-1. On Netcup **after access is restored**, stop all writes briefly or take a consistent SQLite backup using \`sqlite3.Connection.backup()\`; keep the original running until the final cutover.
+1. On Netcup **after access is restored**, stop all writes briefly or take a consistent SQLite backup using \`sqlite3.Connection.backup()\`; keep the original running until the final cutover; export can be delayed if the server remains unreachable.
 2. Copy \`data/history.sqlite3\`, \`data/telegram_delivery.sqlite3\`, \`data/latest.json\` and \`data/listings/\` to a private temporary directory. **Do not commit those files or config.env, bot tokens, or chat IDs.**
 3. On a secured machine: \`python3 cloudflare/export_sqlite.py --data <path-to-private-data> --output <private-migration.sql> --earliest-start YYYY-MM-DD\`.
 4. Create an entirely separate D1 staging database, apply \`schema.sql\`, then import private migration SQL through a secured Wrangler session: \`npx wrangler d1 execute ths-sit-monitor-staging --remote --file <private-migration.sql>\`. Keep the import file outside the repo; delete it securely after validation.
