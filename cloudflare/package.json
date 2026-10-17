@@ -1,0 +1,13 @@
+{
+  "name": "ths-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy:staging": "wrangler deploy --config wrangler.toml --env staging"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
