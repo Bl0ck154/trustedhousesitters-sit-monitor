@@ -57,7 +57,16 @@ function urgent(stays,start,today){const a=journey(stays,start,today).focus;retu
 const shouldAlert=(item,stays,start,today)=>suitable(item,stays,start,today)&&(petTier(item)==="A"||(petTier(item)==="B"&&urgent(stays,start,today)));
 async function settings(db,key){const r=await db.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();return r?.value??null;}
 async function putSetting(db,key,value){await db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key,String(value)).run();}
-async function staysOf(db){return (await db.prepare("SELECT * FROM confirmed_stays ORDER BY start").all()).results;}
+async function staysOf(db){
+ const saved=(await db.prepare("SELECT * FROM confirmed_stays ORDER BY start").all()).results;
+ let provisional=[];try{provisional=JSON.parse(await settings(db,"temporary_confirmed_stays")||"[]");}catch{}
+ for(const x of provisional){
+   if(!/^\\d{4}-\\d\\d-\\d\\d$/.test(x.start||"")||!/^\\d{4}-\\d\\d-\\d\\d$/.test(x.end||"")||x.start>=x.end)continue;
+   if(saved.some(s=>s.start===x.start&&s.end===x.end))continue;
+   saved.push({start:x.start,end:x.end,city:String(x.city||""),country:String(x.country||""),title:String(x.title||"Confirmed externally")});
+ }
+ return saved.sort((a,b)=>a.start.localeCompare(b.start));
+}
 function earliest(env,backup){const d=env.THS_EARLIEST_START||backup||vilniusDay();return /^\d{4}-\d\d-\d\d$/.test(d)?d:vilniusDay();}
 async function ctx(env){const [stays,backup]=await Promise.all([staysOf(env.DB),settings(env.DB,"earliest_start_backup")]);const today=vilniusDay(),start=earliest(env,backup);return {stays,today,start,window:windowFor(stays,start,today)};}
 class Restricted extends Error{}
