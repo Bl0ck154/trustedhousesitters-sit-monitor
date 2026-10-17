@@ -218,7 +218,9 @@ async function doPage(env,page,reviewing,c){
   return data;
 }
 async function scanQuick(env,c){
-  for(let page=1;page<=3;page++){
+  // One page per invocation in Free profile; 3 pages per invocation in full profile.
+  const limit=env.SCAN_PROFILE==="quick"?1:3;
+  for(let page=1;page<=limit;page++){
     const d=await doPage(env,page,false,c);
     if(!d.count||page*12>=d.total)break;
   }
@@ -517,13 +519,20 @@ async function acquire(env,key,seconds){
 }
 async function release(env,key){await env.DB.prepare("UPDATE leases SET expires_at=0 WHERE name=?").bind(key).run();}
 async function scheduler(env,controller){
- if(env.SCAN_ENABLED!=="true"||env.LIVE_MODE!=="true")return;
+ if(env.SCAN_ENABLED!=="true")return;
  const minute=Math.floor(now()/60000);
  if(!(await acquire(env,"cron",55)))return;
  try{
    const c=await ctx(env);
-   if(minute%2===0){try{await scanQuick(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("quick scan failed",e.name);}}
-   try{await scanFull(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("full scan failed",e.name);}
+   if(minute%2===0){
+     try{await scanQuick(env,c);await putSetting(env.DB,"last_quick_success",iso());}
+     catch(e){await putSetting(env.DB,"last_quick_error",String(e.name||"Error"));if(e instanceof Restricted)return;console.warn("quick scan failed",e.name);}
+   }
+   if(env.SCAN_PROFILE!=="quick"){
+     try{await scanFull(env,c);await putSetting(env.DB,"last_full_step",iso());}
+     catch(e){await putSetting(env.DB,"last_full_error",String(e.name||"Error"));if(e instanceof Restricted)return;console.warn("full scan failed",e.name);}
+   }
+   if(env.LIVE_MODE!=="true")return; // Discovery-only phase: never emit Telegram messages.
    if(minute%2===0){try{await statusWatch(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("status failed",e.name);}}
    try{await deliver(env,c);}catch(e){if(e instanceof Restricted)return;console.warn("delivery failed",e.name);}
    if(vilniusMinute()>=8*60+30&&vilniusMinute()<9*60){
