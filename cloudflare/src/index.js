@@ -536,7 +536,7 @@ async function scheduler(env,controller){
    const c=await ctx(env);
    if(minute%2===0){
      try{await scanQuick(env,c);await putSetting(env.DB,"last_quick_success",iso());}
-     catch(e){await putSetting(env.DB,"last_quick_error",String(e.name||"Error"));if(e instanceof Restricted)return;console.warn("quick scan failed",e.name);}
+     catch(e){await putSetting(env.DB,"last_quick_error",String(e.name||"Error")+": "+String(e.message||"").slice(0,160));if(e instanceof Restricted)return;console.warn("quick scan failed",e.name);}
    }
    if(env.SCAN_PROFILE!=="quick"){
      try{await scanFull(env,c);await putSetting(env.DB,"last_full_step",iso());}
