@@ -182,8 +182,12 @@ async function doPage(env,page,reviewing,c){
     if(item.status==="open"&&suitable(item,c.stays,c.start,c.today)&&details<2){
       try{await seenCandidate(env,item,c);details++;}catch(e){if(e instanceof Restricted)throw e;}
     }else{
-      const exists=await env.DB.prepare("SELECT 1 FROM records WHERE assignment_id=?").bind(item.assignment_id).first();
+      const exists=await env.DB.prepare("SELECT status,payload FROM records WHERE assignment_id=?").bind(item.assignment_id).first();
       if(!exists)await archive(env.DB,item);
+      else if(exists.status!==item.status){
+        const former=JSON.parse(exists.payload);
+        await archive(env.DB,{...former,status:item.status,application_count:item.application_count,verified_by_detail:false,eligible_alert:false});
+      }
     }
   }
   return data;
@@ -259,7 +263,8 @@ async function deliver(env,c){
      const mid=await sendCard(env,actual);
      await env.DB.batch([
        env.DB.prepare("UPDATE pending_notifications SET state='sent' WHERE assignment_id=?").bind(row.assignment_id),
-       env.DB.prepare("INSERT OR REPLACE INTO watch(assignment_id,status,payload,last_checked,last_change,message_id) VALUES(?,?,?,?,?,?)").bind(row.assignment_id,"open",JSON.stringify(actual),iso(),iso(),mid)
+       env.DB.prepare("INSERT OR REPLACE INTO watch(assignment_id,status,payload,last_checked,last_change,message_id) VALUES(?,?,?,?,?,?)").bind(row.assignment_id,"open",JSON.stringify(actual),iso(),iso(),mid),
+       env.DB.prepare("INSERT OR REPLACE INTO controls(assignment_id,album_message_id,control_message_id,updated_at) VALUES(?,?,?,?)").bind(row.assignment_id,mid,mid,iso())
      ]);
    }catch(e){await env.DB.prepare("UPDATE pending_notifications SET state='uncertain' WHERE assignment_id=?").bind(row.assignment_id).run();throw e;}
  }
@@ -311,7 +316,8 @@ async function statusWatch(env,c){
      const applied=await env.DB.prepare("SELECT 1 FROM applications WHERE assignment_id=? AND stage IN ('applied','talking','confirmed')").bind(row.assignment_id).first();
      if(applied){await env.DB.batch([env.DB.prepare("UPDATE watch SET status=?,payload=?,last_checked=?,last_change=? WHERE assignment_id=?").bind("open",JSON.stringify(actual),instant,instant,row.assignment_id),env.DB.prepare("DELETE FROM watch_transitions WHERE assignment_id=?").bind(row.assignment_id)]);continue;}
    }
-   const sent=await sendStatus(env,actual,actual.status,row.message_id);
+   const parent=await env.DB.prepare("SELECT control_message_id,album_message_id FROM controls WHERE assignment_id=?").bind(row.assignment_id).first();
+   await sendStatus(env,actual,actual.status,parent?.control_message_id||parent?.album_message_id||row.message_id);
    await env.DB.batch([
      env.DB.prepare("UPDATE watch SET status=?,payload=?,last_checked=?,last_change=? WHERE assignment_id=?").bind(actual.status,JSON.stringify(actual),instant,instant,row.assignment_id),
      env.DB.prepare("DELETE FROM watch_transitions WHERE assignment_id=?").bind(row.assignment_id)
@@ -450,7 +456,9 @@ async function telegramUpdate(env,update){
  if(!m)return;
  const [,action,aid]=m;const item=await snapshot(env,aid);if(!item)return;
  const card=await env.DB.prepare("SELECT message_id FROM watch WHERE assignment_id=?").bind(aid).first();
- if(!card||Number(card.message_id)!==mid)return;
+ const control=await env.DB.prepare("SELECT album_message_id,control_message_id FROM controls WHERE assignment_id=?").bind(aid).first();
+ const alias=await env.DB.prepare("SELECT 1 FROM control_instances WHERE assignment_id=? AND message_id=?").bind(aid,mid).first();
+ if(!([card?.message_id,control?.album_message_id,control?.control_message_id].some(x=>Number(x)===mid)||alias))return;
  if(action==="d"){await description(env,item);return;}
  if(action==="g"||action==="t"){await gallery(env,item,action,c);return;}
  if(action==="a"){await updateStage(env,aid,"applied");await redraw(env,aid,mid);return;}
