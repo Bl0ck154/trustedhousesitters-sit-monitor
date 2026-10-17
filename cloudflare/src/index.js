@@ -86,7 +86,7 @@ async function accessFetch(env,url){
   if(res.status===403||res.status===429){await putSetting(env.DB,"access_until",now()+(res.status===429?3600e3:21600e3));throw new Restricted("THS "+res.status);}
   if(!res.ok)throw new Error("THS "+res.status);
   const html=await res.text();
-  if(/captcha|cloudflare challenge|verify you are human|just a moment/i.test(html.slice(0,12000))){await putSetting(env.DB,"access_until",now()+21600e3);throw new Restricted("THS security challenge");}
+  if(/captcha|cloudflare challenge|verify you are human|verify that you.re not a robot|javascript is disabled|just a moment/i.test(html.slice(0,12000))){await putSetting(env.DB,"access_until",now()+21600e3);throw new Restricted("THS security challenge");}
   // Restrict diagnostics to public document shape; never persist page HTML or personal identifiers.
   const title=(html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]||"").trim().slice(0,90);
   const scriptIds=[...html.matchAll(/<script\b[^>]*\bid\s*=\s*["']([^"']+)["']/gi)].slice(0,12).map(x=>x[1]);
