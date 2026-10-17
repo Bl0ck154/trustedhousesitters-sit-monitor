@@ -664,5 +664,5 @@ export default {
    try{await telegramUpdate(env,body);return new Response("OK");}catch(e){console.warn("webhook failure",e.name);return new Response("Handler failed",{status:503});}
  },
  async scheduled(controller,env,ctx){ctx.waitUntil(scheduler(env,controller));},
- async email(message,env,ctx){ctx.waitUntil(inboundEmail(message,env));}
+ async email(message,env,ctx){await inboundEmail(message,env);}
 };
