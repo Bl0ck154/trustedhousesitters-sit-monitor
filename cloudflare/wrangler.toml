@@ -5,10 +5,14 @@ workers_dev = true
 # Do not add cron triggers to staging. Production schedules are activated ONLY at cutover.
 [vars]
 LIVE_MODE = "false"
-SCAN_ENABLED = "false"
+SCAN_ENABLED = "true"
 WEBHOOK_ENABLED = "false"
 SCAN_PROFILE = "quick"
 THS_EARLIEST_START = "2026-11-14"
+PUBLIC_WORKER_URL = "https://ths-sit-monitor-live.bl0ck-c1b.workers.dev"
+[triggers]
+crons = ["* * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ths-sit-monitor-live"
@@ -17,6 +21,9 @@ database_id = "005aaac8-f1db-48c3-8ef1-110a173ab967"
 [env.staging]
 name = "ths-sit-monitor-staging"
 workers_dev = true
+[env.staging.triggers]
+crons = []
+
 [env.staging.vars]
 LIVE_MODE = "false"
 SCAN_ENABLED = "false"
