@@ -78,10 +78,19 @@ async function accessFetch(env,url){
   if(!res.ok)throw new Error("THS "+res.status);
   const html=await res.text();
   if(/captcha|cloudflare challenge|verify you are human|just a moment/i.test(html.slice(0,12000))){await putSetting(env.DB,"access_until",now()+21600e3);throw new Restricted("THS security challenge");}
-  const tag='<script id="__INITIAL_STATE__" type="application/json">';
-  const a=html.indexOf(tag),b=a>=0?html.indexOf("</script>",a+tag.length):-1;
-  if(a<0||b<0)throw new Error("THS structured state unavailable");
-  const data=JSON.parse(html.slice(a+tag.length,b));
+  // Restrict diagnostics to public document shape; never persist page HTML or personal identifiers.
+  const title=(html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]||"").trim().slice(0,90);
+  const scriptIds=[...html.matchAll(/<script\b[^>]*\bid\s*=\s*["']([^"']+)["']/gi)].slice(0,12).map(x=>x[1]);
+  const match=html.match(/<script\b[^>]*\bid\s*=\s*["']__INITIAL_STATE__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if(!match){
+    await putSetting(env.DB,"last_source_shape",JSON.stringify({length:html.length,title,scriptIds,nextData:html.includes("__NEXT_DATA__"),nuxt:html.includes("__NUXT__"),initialState:html.includes("__INITIAL_STATE__")}));
+    if(/access denied|forbidden|request rejected|one more step|checking your browser|security check/i.test(title)){
+      await putSetting(env.DB,"access_until",now()+21600e3);
+      throw new Restricted("Source access page; 6h cooldown");
+    }
+    throw new Error("THS structured state unavailable");
+  }
+  const data=JSON.parse(match[1]);
   if(!data||!data.search)throw new Error("THS state structure changed");
   return data;
 }
