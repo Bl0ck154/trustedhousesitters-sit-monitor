@@ -24,4 +24,4 @@ THS_EARLIEST_START = "2026-11-01"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "ths-sit-monitor-staging"
-database_id = "REPLACE_WITH_STAGING_D1_ID"
+database_id = "290b9f61-cc5e-4d77-a6d6-5f89aeec7a7c"
