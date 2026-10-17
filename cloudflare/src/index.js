@@ -83,7 +83,7 @@ async function accessFetch(env,url){
   const scriptIds=[...html.matchAll(/<script\b[^>]*\bid\s*=\s*["']([^"']+)["']/gi)].slice(0,12).map(x=>x[1]);
   const match=html.match(/<script\b[^>]*\bid\s*=\s*["']__INITIAL_STATE__["'][^>]*>([\s\S]*?)<\/script>/i);
   if(!match){
-    const snippet=html.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi,"").replace(/<[^>]*>/g," ").replace(/\\s+/g," ").trim().slice(0,220);
+    const snippet=html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim().slice(0,220);
     await putSetting(env.DB,"last_source_shape",JSON.stringify({status:res.status,length:html.length,title,scriptIds,contentType:res.headers.get("content-type"),server:res.headers.get("server"),snippet,nextData:html.includes("__NEXT_DATA__"),nuxt:html.includes("__NUXT__"),initialState:html.includes("__INITIAL_STATE__")}));
     if(/access denied|forbidden|request rejected|one more step|checking your browser|security check/i.test(title)){
       await putSetting(env.DB,"access_until",now()+21600e3);
