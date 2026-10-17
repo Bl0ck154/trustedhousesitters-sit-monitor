@@ -4,14 +4,14 @@ compatibility_date = "2026-10-01"
 workers_dev = true
 # Do not add cron triggers to staging. Production schedules are activated ONLY at cutover.
 [vars]
-LIVE_MODE = "false"
+LIVE_MODE = "true"
 SCAN_ENABLED = "false"
-WEBHOOK_ENABLED = "false"
+WEBHOOK_ENABLED = "true"
 SCAN_PROFILE = "quick"
 THS_EARLIEST_START = "2026-11-14"
 PUBLIC_WORKER_URL = "https://ths-sit-monitor-live.bl0ck-c1b.workers.dev"
 [triggers]
-crons = []
+crons = ["* * * * *"]
 
 [[d1_databases]]
 binding = "DB"
