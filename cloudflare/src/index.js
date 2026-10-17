@@ -63,7 +63,7 @@ async function staysOf(db){
  for(const x of provisional){
    if(!/^\d{4}-\d\d-\d\d$/.test(x.start||"")||!/^\d{4}-\d\d-\d\d$/.test(x.end||"")||x.start>=x.end)continue;
    if(saved.some(s=>s.start===x.start&&s.end===x.end))continue;
-   saved.push({start:x.start,end:x.end,city:String(x.city||""),country:String(x.country||""),title:String(x.title||"Confirmed externally")});
+   saved.push({start:x.start,end:x.end,city:String(x.city||""),country:String(x.country||""),title:String(x.title||"Confirmed externally"),source:"email"});
  }
  return saved.sort((a,b)=>a.start.localeCompare(b.start));
 }
@@ -400,8 +400,9 @@ async function reportText(env,kind,c){
  if(kind==="plan"){
    const text=["🏠 <b>План житла</b>","Початок пошуку: <b>"+esc(c.start)+"</b> · горизонт 95 днів"];
    if(!c.stays.length)text.push("🔴 <b>Підтверджених проживань ще немає.</b>");
-   else text.push("✅ <b>Підтверджено вручну:</b>",...c.stays.map(x=>"• "+esc(x.start)+"–"+esc(x.end)+" · "+esc(x.city)+", "+esc(x.country)));
+   else text.push("✅ <b>Відомі підтверджені сіти:</b>",...c.stays.map(x=>"• "+esc(x.start)+"–"+esc(x.end)+" · "+esc(x.city)+", "+esc(x.country)+(x.source==="email"?" · 📧 підтверджено листом":"")));
    if(j.focus)text.push("🎯 Наступне вікно: <b>"+j.focus[0]+" — "+j.focus[1]+"</b>","⏳ До початку: <b>"+Math.max(0,diff(c.today,j.focus[0]))+" днів</b>");
+   if(env.SCAN_ENABLED!=="true")text.push("⚠️ Автоматичний пошук оголошень зараз вимкнений.");
    for(const [a,b] of j.bridges.slice(0,3))text.push("⚠️ Прогалина <b>"+diff(a,b)+" ночей</b> ("+a+"–"+b+")");
    text.push("🐕 Резерв із собаками: "+(urgent(c.stays,c.start,c.today)?"активні сповіщення":"окремий список /options"));return text.join("\n").slice(0,3950);
  }
