@@ -87,3 +87,20 @@ Current flags: SCAN_ENABLED=true, SCAN_PROFILE=quick, LIVE_MODE=false and WEBHOO
 - Existing SQLite manual statuses, old card identifiers and ignores are absent until Netcup history is imported.
 - Staging remains separate and disabled. Cron propagation takes up to 15 minutes.
 - Do not add API secrets to source, logs, tickets, or GitHub.
+
+## Alternative listing feed: Sittify (2026-10-17)
+
+**Never claim the original THS live scraper works on Cloudflare.** THS responds to the Worker with HTTP 202 and a JavaScript robot-verification page. SCAN_ENABLED remains false.
+
+Sittify (https://sittify.com/ ; Android app https://play.google.com/store/apps/details?id=com.sittify.app) currently advertises THS sit aggregation, personalized filters and prompt email/push alerts. It is an independent third party and its service status and alert speed are not guaranteed. The fastest currently usable option is installing the mobile app and configuring its filters directly. No public Sittify API or outgoing webhook contract has been confirmed, so do not attempt unsupported scraping.
+
+Optional email-to-Telegram adapter has been implemented, but NOT activated. It handles Cloudflare Email Routing's 'email' event, checks Sittify sender domain, deduplicates Message-ID-derived hashes in inbound_alerts, and sends the subject plus allowlisted HTTPS sit links to the same Telegram owner. It does not poll either platform, does not import old data, and does not reconstruct full THS cards. It ignores other sender domains.
+
+Activation prerequisites:
+1. Register for Sittify, create THS-specific alert filters and enable email alerts.
+2. Choose an email delivery path to the Worker. A dedicated address on an existing Cloudflare-managed domain can route incoming mail to the Worker via Cloudflare Email Routing; alternatively, manually set up a Gmail forward from the account receiving Sittify emails. Check Cloudflare DNS MX conflicts before enabling routing, and verify any forwarding address manually. Neither Cloudflare Email Routing nor Gmail forwarding rules have been configured automatically.
+3. Enable EMAIL_ALERTS_ENABLED=true in live Worker settings only after the email route has been configured.
+4. Send one legitimate Sittify test alert and verify bot delivery and dedup. The adapter currently has no real production Sittify email sample, and compatibility with its exact MIME format remains unverified.
+5. Leave SCAN_ENABLED=false. Do not confuse email-generated notifications with native every-two-minute site scans.
+
+The adapter's passive D1 table can be installed in the live D1 without affecting the original Telegram webhook or the scanner.
