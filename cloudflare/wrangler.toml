@@ -1,0 +1,27 @@
+name = "ths-sit-monitor"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+# Do not add cron triggers to staging. Production schedules are activated ONLY at cutover.
+[vars]
+LIVE_MODE = "false"
+SCAN_ENABLED = "false"
+WEBHOOK_ENABLED = "false"
+THS_EARLIEST_START = "2026-11-01"
+[[d1_databases]]
+binding = "DB"
+database_name = "ths-sit-monitor"
+database_id = "REPLACE_WITH_PRODUCTION_D1_ID"
+
+[env.staging]
+name = "ths-sit-monitor-staging"
+workers_dev = true
+[env.staging.vars]
+LIVE_MODE = "false"
+SCAN_ENABLED = "false"
+WEBHOOK_ENABLED = "false"
+THS_EARLIEST_START = "2026-11-01"
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "ths-sit-monitor-staging"
+database_id = "REPLACE_WITH_STAGING_D1_ID"
