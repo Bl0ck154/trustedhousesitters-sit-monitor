@@ -7,6 +7,7 @@ workers_dev = true
 LIVE_MODE = "true"
 SCAN_ENABLED = "false"
 WEBHOOK_ENABLED = "true"
+EMAIL_ALERTS_ENABLED = "false"
 SCAN_PROFILE = "quick"
 THS_EARLIEST_START = "2026-11-14"
 PUBLIC_WORKER_URL = "https://ths-sit-monitor-live.bl0ck-c1b.workers.dev"
