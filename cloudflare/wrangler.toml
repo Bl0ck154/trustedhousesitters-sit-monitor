@@ -7,11 +7,12 @@ workers_dev = true
 LIVE_MODE = "false"
 SCAN_ENABLED = "false"
 WEBHOOK_ENABLED = "false"
-THS_EARLIEST_START = ""
+SCAN_PROFILE = "quick"
+THS_EARLIEST_START = "2026-11-14"
 [[d1_databases]]
 binding = "DB"
-database_name = "ths-sit-monitor"
-database_id = "REPLACE_WITH_PRODUCTION_D1_ID"
+database_name = "ths-sit-monitor-live"
+database_id = "005aaac8-f1db-48c3-8ef1-110a173ab967"
 
 [env.staging]
 name = "ths-sit-monitor-staging"
@@ -20,7 +21,8 @@ workers_dev = true
 LIVE_MODE = "false"
 SCAN_ENABLED = "false"
 WEBHOOK_ENABLED = "false"
-THS_EARLIEST_START = ""
+SCAN_PROFILE = "quick"
+THS_EARLIEST_START = "2026-11-14"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "ths-sit-monitor-staging"
