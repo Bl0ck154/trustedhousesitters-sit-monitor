@@ -61,7 +61,7 @@ async function staysOf(db){
  const saved=(await db.prepare("SELECT * FROM confirmed_stays ORDER BY start").all()).results;
  let provisional=[];try{provisional=JSON.parse(await settings(db,"temporary_confirmed_stays")||"[]");}catch{}
  for(const x of provisional){
-   if(!/^\\d{4}-\\d\\d-\\d\\d$/.test(x.start||"")||!/^\\d{4}-\\d\\d-\\d\\d$/.test(x.end||"")||x.start>=x.end)continue;
+   if(!/^\d{4}-\d\d-\d\d$/.test(x.start||"")||!/^\d{4}-\d\d-\d\d$/.test(x.end||"")||x.start>=x.end)continue;
    if(saved.some(s=>s.start===x.start&&s.end===x.end))continue;
    saved.push({start:x.start,end:x.end,city:String(x.city||""),country:String(x.country||""),title:String(x.title||"Confirmed externally")});
  }
