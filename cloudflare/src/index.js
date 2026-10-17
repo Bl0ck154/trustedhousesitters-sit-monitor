@@ -58,8 +58,8 @@ const shouldAlert=(item,stays,start,today)=>suitable(item,stays,start,today)&&(p
 async function settings(db,key){const r=await db.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();return r?.value??null;}
 async function putSetting(db,key,value){await db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key,String(value)).run();}
 async function staysOf(db){return (await db.prepare("SELECT * FROM confirmed_stays ORDER BY start").all()).results;}
-function earliest(env){const d=env.THS_EARLIEST_START||vilniusDay();return /^\d{4}-\d\d-\d\d$/.test(d)?d:vilniusDay();}
-async function ctx(env){const stays=await staysOf(env.DB),today=vilniusDay(),start=earliest(env);return {stays,today,start,window:windowFor(stays,start,today)};}
+function earliest(env,backup){const d=env.THS_EARLIEST_START||backup||vilniusDay();return /^\d{4}-\d\d-\d\d$/.test(d)?d:vilniusDay();}
+async function ctx(env){const [stays,backup]=await Promise.all([staysOf(env.DB),settings(env.DB,"earliest_start_backup")]);const today=vilniusDay(),start=earliest(env,backup);return {stays,today,start,window:windowFor(stays,start,today)};}
 class Restricted extends Error{}
 async function accessFetch(env,url){
   const u=new URL(url);
@@ -108,7 +108,9 @@ function photoURLs(photos){
 function enrich(out,item){
   const petPhotos=(item.pets||[]).flatMap(p=>p.photos||[]);
   const pet=photoURLs(petPhotos),images=photoURLs(item.photos||[]);
-  return {...out,photo_urls:images.filter(x=>!pet.includes(x)),pet_photo_urls:pet,introduction:String(item.introduction||""),responsibilities:String(item.responsibilities||""),pet_care:String(item.petCareResponsibilities||""),local_attractions:String(item.localAttractions||""),home_features:item.homeFeatures||[],amenities:item.amenities||{},pet_profiles:(item.pets||[]).map(p=>({name:p.name,description:p.description,yearOfBirth:p.yearOfBirth})),owner_name:item.ownerName,home_type:item.homeType,car_included:item.carIncluded,source_published_at:item.publishedDate};
+  const lat=item.location?.coordinates?.lat,lon=item.location?.coordinates?.lon;
+  const coordinates=typeof lat==="number"&&typeof lon==="number"&&lat>=-90&&lat<=90&&lon>=-180&&lon<=180?{lat,lon,precision:"locality"}:undefined;
+  return {...out,coordinates,photo_urls:images.filter(x=>!pet.includes(x)),pet_photo_urls:pet,introduction:String(item.introduction||""),responsibilities:String(item.responsibilities||""),pet_care:String(item.petCareResponsibilities||""),local_attractions:String(item.localAttractions||""),home_features:item.homeFeatures||[],amenities:item.amenities||{},pet_profiles:(item.pets||[]).map(p=>({name:p.name,description:p.description,yearOfBirth:p.yearOfBirth})),owner_name:item.ownerName,home_type:item.homeType,car_included:item.carIncluded,source_published_at:item.publishedDate};
 }
 async function detail(env,candidate,context){
   const state=await accessFetch(env,candidate.url);
@@ -462,8 +464,21 @@ async function telegramUpdate(env,update){
  const control=await env.DB.prepare("SELECT album_message_id,control_message_id FROM controls WHERE assignment_id=?").bind(aid).first();
  const alias=await env.DB.prepare("SELECT 1 FROM control_instances WHERE assignment_id=? AND message_id=?").bind(aid,mid).first();
  if(!([card?.message_id,control?.album_message_id,control?.control_message_id].some(x=>Number(x)===mid)||alias))return;
- if(action==="d"){await description(env,item);return;}
- if(action==="g"||action==="t"){await gallery(env,item,action,c);return;}
+ if(["d","g","t"].includes(action)){
+   const t=now()/1000,interval=action==="d"?30:120;
+   const claim=await env.DB.prepare("INSERT INTO button_sends(assignment_id,message_id,action,sent_at,state) VALUES(?,?,?,?,'sending') ON CONFLICT(assignment_id,message_id,action) DO UPDATE SET sent_at=excluded.sent_at,state='sending' WHERE button_sends.sent_at<?")
+     .bind(aid,mid,action,t,t-interval).run();
+   if(!claim.meta.changes)return;
+   try{
+     if(action==="d")await description(env,item);
+     else await gallery(env,item,action,c);
+     await env.DB.prepare("UPDATE button_sends SET state='sent' WHERE assignment_id=? AND message_id=? AND action=?").bind(aid,mid,action).run();
+   }catch(e){
+     await env.DB.prepare("UPDATE button_sends SET state='uncertain' WHERE assignment_id=? AND message_id=? AND action=?").bind(aid,mid,action).run();
+     throw e;
+   }
+   return;
+ }
  if(action==="a"){await updateStage(env,aid,"applied");await redraw(env,aid,mid);return;}
  if(action==="u"){await env.DB.batch([env.DB.prepare("DELETE FROM applications WHERE assignment_id=?").bind(aid),env.DB.prepare("DELETE FROM confirmed_stays WHERE assignment_id=?").bind(aid)]);await redraw(env,aid,mid);return;}
  if(action==="k"){
