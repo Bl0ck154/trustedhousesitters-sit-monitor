@@ -104,3 +104,18 @@ Activation prerequisites:
 5. Leave SCAN_ENABLED=false. Do not confuse email-generated notifications with native every-two-minute site scans.
 
 The adapter's passive D1 table can be installed in the live D1 without affecting the original Telegram webhook or the scanner.
+
+## GitHub-hosted egress experiment (2026-10-18)
+
+Single-request test (no login, retry, browser impersonation, or proxy) ran on a GitHub-hosted Ubuntu runner:
+https://github.com/Bl0ck154/trustedhousesitters-sit-monitor/actions/runs/39113955860
+
+Observed:
+- HTTP 202, text/html
+- security challenge: true
+- public structured data marker: false
+- response body: 2163 bytes
+
+This matches the previous Cloudflare anti-bot interstitial, so GitHub-hosted Actions **do not currently provide working THS listing data**, even though the CI job completed successfully. Do not schedule retries or wire this into user-facing alerts.
+
+The one-time probe is at cloudflare/scripts/probe_public_ths.py; its workflow at .github/workflows/ths-egress-probe.yml is triggered only if that workflow file itself changes on feature/cloudflare-workers. It has no cron, secrets, deployment permissions or Telegram delivery. Main and the live Cloudflare bot are unchanged.
