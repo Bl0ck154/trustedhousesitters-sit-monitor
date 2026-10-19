@@ -32,6 +32,8 @@ DB = ROOT / "telegram_delivery.sqlite3"
 MIN_RECHECK = dt.timedelta(minutes=4)
 HOT_RECHECK = dt.timedelta(minutes=2)
 STATUS_CONFIRM_DELAY = dt.timedelta(seconds=65)
+CLOSING_PENDING_TTL = dt.timedelta(minutes=12)
+CONFIRMED_REOPEN_DELAY = dt.timedelta(minutes=20)
 
 def shorten(value, maxchars=190):
     s = " ".join(str(value or "").split())
@@ -234,10 +236,38 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
                              (clock().isoformat(),aid))
                 conn.commit()
                 continue
+            # A confirmed sit may appear as an older Reviewing snapshot in
+            # THS public caches, even though the assignment is already filled.
+            # Reviewing/Removed does not prove a sitter was un-selected. Never
+            # downgrade a confirmed assignment to either of those states.
+            # A genuine reopening must become a clearly verified Open again.
+            if old=="confirmed" and actual["status"] in ("reviewing","removed"):
+                conn.execute("DELETE FROM watch_transitions WHERE assignment_id=?",(aid,))
+                conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
+                             (clock().isoformat(),aid))
+                conn.commit()
+                continue
             # Save only the verified detail snapshot. Do not let one stale
             # public response generate a Telegram transition.
             monitor.save_detail(actual)
             if actual["status"]==old:
+                # Public THS caches can alternate between a current Reviewing
+                # response and a stale Open response for the same assignment.
+                # Do not discard a recent closure candidate on one stale Open.
+                if old=="open":
+                    candidate=conn.execute(
+                        "SELECT proposed_status,first_seen FROM watch_transitions "
+                        "WHERE assignment_id=?",(aid,)).fetchone()
+                    if candidate and candidate[0] in ("reviewing","confirmed","removed"):
+                        try:
+                            age=now-dt.datetime.fromisoformat(candidate[1])
+                        except (ValueError,TypeError):
+                            age=CLOSING_PENDING_TTL+dt.timedelta(seconds=1)
+                        if dt.timedelta(0)<=age<=CLOSING_PENDING_TTL:
+                            watch_row(conn,actual,old)
+                            print("watch_disputed_stale_open",aid,
+                                  "pending",candidate[0],flush=True)
+                            continue
                 conn.execute("DELETE FROM watch_transitions WHERE assignment_id=?",(aid,))
                 watch_row(conn,actual,old)
                 continue
@@ -246,6 +276,13 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
             pending=conn.execute(
                 "SELECT proposed_status,first_seen,observation_count "
                 "FROM watch_transitions WHERE assignment_id=?",(aid,)).fetchone()
+            if pending and new in ("reviewing","confirmed","removed"):
+                try:
+                    age=now-dt.datetime.fromisoformat(pending[1])
+                except (ValueError,TypeError):
+                    age=CLOSING_PENDING_TTL+dt.timedelta(seconds=1)
+                if age<dt.timedelta(0) or age>CLOSING_PENDING_TTL:
+                    pending=None
             if not pending or pending[0]!=new:
                 conn.execute("""INSERT INTO watch_transitions
                     (assignment_id,proposed_status,first_seen,observation_count)
@@ -265,8 +302,11 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
                 first=now
             elapsed=now-first
             # Reopening is more prone to stale public-cache snapshots.
-            needed_prior_observations=2 if new=="open" else 1
-            if pending[2]<needed_prior_observations or elapsed<STATUS_CONFIRM_DELAY:
+            needed_prior_observations=(3 if old=="confirmed" and new=="open"
+                                       else 2 if new=="open" else 1)
+            required_delay=(CONFIRMED_REOPEN_DELAY if old=="confirmed" and new=="open"
+                            else STATUS_CONFIRM_DELAY)
+            if pending[2]<needed_prior_observations or elapsed<required_delay:
                 conn.execute("UPDATE watch_transitions SET observation_count=observation_count+1 "
                              "WHERE assignment_id=?",(aid,))
                 conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
@@ -292,6 +332,20 @@ def refresh_watch(conn,token,chat_id,force=False,max_items=60):
                     conn.commit()
                     print("watch_reopen_notified_skipped_already_applied",aid,flush=True)
                     continue
+            # Corroborate immediately before notifying. An independent detail
+            # request can expose a stale contrary cache snapshot; leave the
+            # transition pending rather than issue a misleading status alert.
+            confirmed=monitor.validate_detail(actual)
+            if confirmed["status"]!=new or (
+                    new=="open" and confirmed.get("public_can_apply") is not True):
+                conn.execute("UPDATE watch SET last_checked=? WHERE assignment_id=?",
+                             (clock().isoformat(),aid))
+                conn.commit()
+                print("watch_disputed_final_check",aid,new,"vs",
+                      confirmed.get("status"),flush=True)
+                continue
+            actual=confirmed
+            monitor.save_detail(actual)
             mid=send_status(token,chat_id,actual,new,
                             reply_to_id=original_card_id(conn,aid))
             watch_row(conn,actual,new)
@@ -321,9 +375,12 @@ def deliver_queue(conn,token,chat_id,events,limit=15):
         if sent+errors>=limit:
             break
         watch=conn.execute("SELECT status,message_id FROM watch WHERE assignment_id=?",(e["assignment_id"],)).fetchone()
-        if watch and watch[0]=="open":
-            # Already announced through the lifecycle watcher, or older delivered event.
-            delivery_row(conn,e["event_key"],"sent",watch[1])
+        if watch:
+            # Any tracked assignment already has its original card, including
+            # while Reviewing/Confirmed/Removed. Reopening gets a short status
+            # update from refresh_watch, never a second photo card.
+            original_mid=original_card_id(conn,e["assignment_id"]) or watch[1]
+            delivery_row(conn,e["event_key"],"sent",original_mid)
             skipped+=1
             continue
         try:
