@@ -16,6 +16,14 @@ def item(assignment=None, features=None):
             "wifiAvailable": "highSpeed"}
 
 class MonitorTests(unittest.TestCase):
+    def setUp(self):
+        # Unit tests must not depend on the owner's real confirmed stays:
+        # booking Nürnberg advances the live search window to November.
+        from unittest.mock import patch
+        isolated=patch.object(m,"get_confirmed",return_value=[])
+        isolated.start()
+        self.addCleanup(isolated.stop)
+
     def test_open_vs_reviewing_and_confirmed(self):
         a = item()["openAssignments"][0]
         self.assertEqual(m.classify(a, item()), "open")
@@ -129,7 +137,7 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(m.storage(db,[summary],True)),0)
             self.assertEqual(len(m.storage(db,[verified],True)),0)
 
-    def test_dedup_and_reopening(self):
+    def test_dedup_and_reopening_does_not_repeat_photo_card(self):
         i = item()
         a = i["openAssignments"][0]
         open_row = m.fingerprint(i,a,"open")
@@ -140,7 +148,8 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(m.storage(db,[open_row],True)),1)
             self.assertEqual(len(m.storage(db,[open_row],True)),0)
             self.assertEqual(len(m.storage(db,[{**open_row,"status":"reviewing"}],True)),0)
-            self.assertEqual(len(m.storage(db,[open_row],True)),1)
+            # Reopening is a lifecycle update, not another photo card.
+            self.assertEqual(len(m.storage(db,[open_row],True)),0)
 
 if __name__ == "__main__":
     unittest.main()
