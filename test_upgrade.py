@@ -27,16 +27,36 @@ def sample(status="open"):
                           "https://res.cloudinary.com/trustedhousesitters/image/upload/t_highres_2mp,f_auto/v1/remote_media/media/photo/c.jpg"]}
 class Tests(unittest.TestCase):
     def confirm_transition(self,conn,token,chat):
-        # First result is tentative. Two independent observations are
-        # required; mock zero waiting for deterministic unit tests.
-        with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)):
+        # First result is tentative. Mock waiting only; the confirmation
+        # observation count remains enforced for reopening.
+        original=conn.execute("SELECT status FROM watch LIMIT 1").fetchone()[0]
+        with patch.object(m,"STATUS_CONFIRM_DELAY",dt.timedelta(0)), \
+             patch.object(m,"CONFIRMED_REOPEN_DELAY",dt.timedelta(0)):
             first=m.refresh_watch(conn,token,chat,force=True)
             self.assertEqual(first,(0,0))
             state=conn.execute("SELECT proposed_status FROM watch_transitions LIMIT 1").fetchone()
             if state and state[0]=="open":
                 self.assertEqual(m.refresh_watch(conn,token,chat,force=True),(0,0))
+                if original=="confirmed":
+                    self.assertEqual(m.refresh_watch(conn,token,chat,force=True),(0,0))
             return m.refresh_watch(conn,token,chat,force=True)
 
+
+    def test_reviewing_watch_blocks_repeat_photo_card(self):
+        # A previous photo card must suppress new Open events even if the
+        # lifecycle watcher currently labels the assignment Reviewing.
+        with tempfile.TemporaryDirectory() as t:
+            conn=sqlite3.connect(pathlib.Path(t)/"db.sqlite3")
+            m.db_init(conn)
+            assignment=sample("reviewing")
+            m.watch_row(conn,assignment,"reviewing",message_id=74)
+            event={**sample("open"),"event_key":"repeat-open-event"}
+            with patch.object(m.monitor,"validate_detail",side_effect=AssertionError("must not refetch")), \
+                 patch.object(m,"send_open",side_effect=AssertionError("must not resend")):
+                sent,skipped,errors=m.deliver_queue(conn,"tok","chat",[event])
+            self.assertEqual((sent,skipped,errors),(0,1,0))
+            self.assertEqual(conn.execute("SELECT state,message_id FROM delivery WHERE event_key=?",(event["event_key"],)).fetchone(),("sent",74))
+            conn.close()
 
     def test_format_and_clickable_title(self):
         txt=m.caption(sample())
