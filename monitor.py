@@ -416,19 +416,33 @@ def storage(db, confirmed, commit):
         local_day=plan.today().isoformat()
         sent_backup_today=con.execute("SELECT COUNT(*) FROM backup_alert_days WHERE local_day=?",(local_day,)).fetchone()[0]
         # Highest-value candidates first; a backup wave cannot drown out cats.
+        # The queue is an append-only record of earlier announcements. A
+        # Reviewing -> Open transition must not create another photo card.
+        queued_ids=set()
+        queue_path=OUT / "pending-notifications.jsonl"
+        if queue_path.is_file():
+            with queue_path.open(encoding="utf-8") as prior_events:
+                for line in prior_events:
+                    try:
+                        aid=str(json.loads(line).get("assignment_id") or "")
+                        if aid:queued_ids.add(aid)
+                    except (ValueError,TypeError):
+                        continue
         sorted_rows=sorted(confirmed,key=lambda x:(plan.pet_tier(x)=="B",
                            -plan.priority(x,get_confirmed())))
         for item in sorted_rows:
             old = con.execute("SELECT status,payload FROM records WHERE assignment_id=?", (item["assignment_id"],)).fetchone()
             prior = json.loads(old[1]) if old else {}
-            previously_alerted = bool(prior.get("_alert_recorded",
-                prior.get("eligible_alert") and prior.get("verified_by_detail")
-                and plan.pet_tier(prior)=="A"))
+            previously_alerted = bool(
+                str(item["assignment_id"]) in queued_ids or
+                prior.get("_alert_recorded",
+                    prior.get("eligible_alert") and prior.get("verified_by_detail")
+                    and plan.pet_tier(prior)=="A")
+            )
             can_alert = (item["status"] == "open" and item.get("eligible_alert")
                          and item.get("verified_by_detail"))
-            fresh_open = old is None or old[0] != "open"
             newly_alerted=False
-            if can_alert and (fresh_open or not previously_alerted):
+            if can_alert and not previously_alerted:
                 is_backup=plan.pet_tier(item)=="B"
                 if not is_backup or sent_backup_today<3:
                     outgoing.append(item)
@@ -439,8 +453,9 @@ def storage(db, confirmed, commit):
                         sent_backup_today+=1
             # A later fast partial scan may see an already notified sit only as
             # an unverified search summary. Never undo the sent-marker or re-alert.
-            item["_alert_recorded"]=bool(item["status"] == "open" and
-                                           (newly_alerted or (old and old[0]=="open" and previously_alerted)))
+            # Preserve this marker across Reviewing/Removed, so a reopened
+            # assignment cannot be announced as a brand-new photo card.
+            item["_alert_recorded"]=bool(previously_alerted or newly_alerted)
             con.execute("INSERT INTO records (assignment_id,status,payload,updated_at) VALUES (?,?,?,?) ON CONFLICT(assignment_id) DO UPDATE SET status=excluded.status,payload=excluded.payload,updated_at=excluded.updated_at",
                         (item["assignment_id"],item["status"],json.dumps(item,ensure_ascii=False),now))
         con.commit()
