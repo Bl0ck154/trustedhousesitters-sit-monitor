@@ -1,3 +1,5 @@
+> **Operational state (2026-10-19): Netcup VPS is PRIMARY.** THS discovery (2-minute quick / 30-minute full), Telegram delivery (1-minute), status checks (2-minute), historic SQLite applications/bookings and ths-telegram-buttons.service run on Netcup. An actual VPS full scan returned 692 Open and 463 Reviewing results across 97 pages, zero errors; sending a Telegram message from VPS was verified. Cloudflare Worker is **standby only**: LIVE_MODE=false, WEBHOOK_ENABLED=false, SCAN_ENABLED=false, EMAIL_ALERTS_ENABLED=false, no Cron, secret bindings retained. Telegram webhook was removed with drop_pending_updates=false; the VPS getUpdates systemd dispatcher starts at boot. DO NOT turn the Cloudflare webhook back on while VPS polling is active. GitHub Actions THS probe received 202 bot verification. No D1 migration is required while VPS is primary.
+
 # TrustedHousesitters Cloudflare Workers port (experimental)
 
 The existing Python runtime remains unchanged. This port is **not** a production cutover and is not guaranteed parity until verified with migrated data and independent tests. No credentials or private data belong in Git.
