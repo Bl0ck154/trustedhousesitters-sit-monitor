@@ -1,0 +1,21 @@
+name: THS one-shot public access check
+
+on:
+  push:
+    branches: [feature/cloudflare-workers]
+    paths:
+      - '.github/workflows/ths-egress-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: One public HTTPS request (no retries, no secrets)
+        run: python3 cloudflare/scripts/probe_public_ths.py
